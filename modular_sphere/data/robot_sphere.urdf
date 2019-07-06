@@ -1,5 +1,5 @@
 <?xml version="1.0" ?>
-<robot name="urdf_robot">
+<robot name="robot_sphere">
   <link name="baseLink">
   	<contact>
       <rolling_friction value="0.03"/>
@@ -14,9 +14,9 @@
     <visual>
       <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
-				<mesh filename="sphere_smooth.obj" scale="0.5 0.5 0.5"/>
+				<mesh filename="robot_sphere.obj" scale="0.5 0.5 0.5"/>
       </geometry>
-      <material name="red">
+      <material name="grey">
         <color rgba="0.8 0.8 0.8 1"/>
         <specular rgb="0.8 0.8 0.8"/>
       </material>

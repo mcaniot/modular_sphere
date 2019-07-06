@@ -1,0 +1,4 @@
+*.pyc
+build/*
+dist/*
+modular_sphere.egg-info/*

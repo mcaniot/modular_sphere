@@ -1,17 +1,18 @@
-import robot_sphere
+from modular_sphere import RobotSphere
+from modular_sphere import SimulationManager
 import pybullet as p
 from time import sleep
 from os.path import dirname, abspath
 
 PARENT_PATH = dirname(dirname(abspath(__file__)))
-PATH_TO_DATA = PARENT_PATH + "/data/"
-print(PATH_TO_DATA)
+DATA_PATH = PARENT_PATH + '/modular_sphere/data'
 physicsClient = p.connect(p.GUI)
 p.setGravity(0, 0, -10)
-p.setAdditionalSearchPath(PATH_TO_DATA)
-planeId = p.loadURDF("plane.urdf")
-sphere = robot_sphere.RobotSphere()
-
+simulation_manager = SimulationManager()
+sphere = simulation_manager.spawnRobotSphere(
+                physicsClient,
+                translation=[0,0,1], quaternion=[0,0,0,1],
+                 spawn_ground_plane=True)
 forward = 0
 turn = 0
 
@@ -24,7 +25,8 @@ while (1):
   spherePos, orn = p.getBasePositionAndOrientation(sphere.robot_model)
 
   cameraTargetPosition = spherePos
-  p.resetDebugVisualizerCamera(cameraDistance, cameraYaw, cameraPitch, cameraTargetPosition)
+  p.resetDebugVisualizerCamera(cameraDistance, cameraYaw, cameraPitch,
+                               cameraTargetPosition)
   camInfo = p.getDebugVisualizerCamera()
   camForward = camInfo[5]
 
@@ -57,7 +59,8 @@ while (1):
     if (k == p.B3G_DOWN_ARROW and (v & p.KEY_WAS_RELEASED)):
       forward = 0
 
-  force = [forward * camForward[0] * forwardVec, forward * camForward[1]* forwardVec, 0]
+  force = [forward * camForward[0] * forwardVec,
+           forward * camForward[1]* forwardVec, 0]
   cameraYaw = cameraYaw + turn
 
   sphere.move(force)
