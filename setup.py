@@ -5,6 +5,9 @@ setuptools.setup(
     version='0.0.1',
     author="Maxime Caniot",
     author_email="maxime.caniot@gmail.com",
+    description="Bullet-based simulation for a modular sphere robot",
+    long_description=readme,
+    long_description_content_type="text/markdown",
     url="https://github.com/mcaniot/modular_sphere",
     packages=setuptools.find_packages(),
     install_requires=['pybullet', 'qibullet'],
@@ -15,7 +18,7 @@ setuptools.setup(
     keywords=[
         'physics simulation',
         'robotics',
-        'modular robot',
+        'modular sphere robot',
         'soft robot'],
     license='Creative Commons Attribution-Noncommercial-Share Alike license',
     long_description=open('README.txt').read(),
