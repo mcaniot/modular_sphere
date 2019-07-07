@@ -66,3 +66,5 @@ while (1):
   sphere.move(force)
   p.stepSimulation()
   sleep(1. / 240.)
+
+simulation_manager.stopSimulation(physics_client=physicsClient)
