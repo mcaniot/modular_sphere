@@ -6,7 +6,6 @@ setuptools.setup(
     author="Maxime Caniot",
     author_email="maxime.caniot@gmail.com",
     description="Bullet-based simulation for a modular sphere robot",
-    long_description=readme,
     long_description_content_type="text/markdown",
     url="https://github.com/mcaniot/modular_sphere",
     packages=setuptools.find_packages(),
@@ -21,7 +20,7 @@ setuptools.setup(
         'modular sphere robot',
         'soft robot'],
     license='Creative Commons Attribution-Noncommercial-Share Alike license',
-    long_description=open('README.txt').read(),
+    long_description=open('README.md').read(),
     classifiers=[
         "License :: OSI Approved :: Apache Software License",
         "Programming Language :: Python :: 2.7",
