@@ -27,6 +27,7 @@ class RobotSphere(RobotVirtual):
             baseOrientation=quaternion,
             globalScaling=self.scale)
         self.setTexture(self.path_image_texture)
+        self.setColor(self.rgba)
         p.changeDynamics(self.robot_model, -1, linearDamping=0.9,
                          physicsClientId=self.physics_client)
         # self.constraint = p.createConstraint(
@@ -43,16 +44,23 @@ class RobotSphere(RobotVirtual):
                             flags=p.WORLD_FRAME,
                             physicsClientId=self.physics_client)
 
-    def getScale(self):
-        return self.scale
-
     def getDeformation(self):
         pass
 
+    def getScale(self):
+        return self.scale
+
+    def getTextureId(self):
+        return self.texture_id
+
+    def getTexturePathName(self):
+        return self.path_image_texture
+
     def setColor(self, rgba):
-        if isinstance(rgba, list) and len(rgba) == 4:
+        if rgba is not None:
             p.changeVisualShape(self.robot_model, -1, rgbaColor=rgba,
-                            physicsClientId=self.physics_client)
+                                physicsClientId=self.physics_client)
+            self.rgba = rgba
 
     def setDeformation(self):
         pass
@@ -69,6 +77,7 @@ class RobotSphere(RobotVirtual):
         if path_image is not None and path_image != self.path_image_texture:
             self.texture_id = p.loadTexture(path_image,
                                         physicsClientId=self.physics_client)
+            self.path_image_texture = path_image
         self.__setTexture()
 
     def __setTexture(self):
