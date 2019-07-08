@@ -30,6 +30,7 @@ class RobotSphere(RobotVirtual):
         self.setColor(self.rgba)
         p.changeDynamics(self.robot_model, -1, linearDamping=0.9,
                          physicsClientId=self.physics_client)
+
         # self.constraint = p.createConstraint(
         #                     self.robot_model, -1, -1, -1, p.JOINT_FIXED,
         #                     [0, 0, 0], [0, 0, 0], [1,1,1],
