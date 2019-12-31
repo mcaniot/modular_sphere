@@ -31,13 +31,8 @@ class RobotSphere(RobotVirtual):
         p.changeDynamics(self.robot_model, -1, linearDamping=0.9,
                          physicsClientId=self.physics_client)
 
-        # self.constraint = p.createConstraint(
-        #                     self.robot_model, -1, -1, -1, p.JOINT_FIXED,
-        #                     [0, 0, 0], [0, 0, 0], [1,1,1],
-        #                     self.physics_client)
-
     def move(self, force):
-        pos, orn = p.getBasePositionAndOrientation(
+        pos, _ = p.getBasePositionAndOrientation(
                                 self.robot_model,
                                 physicsClientId=self.physics_client)
         p.applyExternalForce(
