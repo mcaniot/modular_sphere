@@ -6,9 +6,8 @@ from os.path import dirname, abspath
 
 PARENT_PATH = dirname(dirname(abspath(__file__)))
 DATA_PATH = PARENT_PATH + '/modular_sphere/data'
-physicsClient = p.connect(p.GUI)
-p.setGravity(0, 0, -10)
 simulation_manager = SimulationManager()
+physicsClient = simulation_manager.launchSimulation(gui=True)
 sphere = simulation_manager.spawnRobotSphere(
                 physicsClient,
                 translation=[0,0,1], quaternion=[0,0,0,1],
@@ -62,9 +61,7 @@ while (1):
   force = [forward * camForward[0] * forwardVec,
            forward * camForward[1]* forwardVec, 0]
   cameraYaw = cameraYaw + turn
-
   sphere.move(force)
-  p.stepSimulation()
   sleep(1. / 240.)
 
 simulation_manager.stopSimulation(physics_client=physicsClient)
