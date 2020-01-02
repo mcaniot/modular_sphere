@@ -20,7 +20,7 @@ from stable_baselines.gail import generate_expert_traj
 from stable_baselines.gail import ExpertDataset
 
 ENV_ID = 'NaoBulletEnv'
-PATH_MODEL = 'models_nao/'
+PATH_MODEL = 'data/models/'
 AGENT = "PPO2"
 
 
@@ -85,7 +85,7 @@ def main():
     seed = int(time.time())
     np.random.seed(seed)
     # train the model
-    train(num_timesteps=int(20e7), seed=seed,
+    train(num_timesteps=int(1e6), seed=seed,
           model_path=PATH_MODEL)
     visualize(PATH_MODEL)
 
