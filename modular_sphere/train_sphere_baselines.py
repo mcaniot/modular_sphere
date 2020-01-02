@@ -86,10 +86,10 @@ def main():
     seed = int(time.time())
     np.random.seed(seed)
     # train the model
-    nb_iter = int(1e7)
-    train(num_timesteps=nb_iter, seed=seed,
-          model_path=PATH_MODEL)
-    # visualize(PATH_MODEL + "PPO2_" + str(nb_iter) + ".pkl")
+    nb_iter = int(2e6)
+    # train(num_timesteps=nb_iter, seed=seed,
+    #       model_path=PATH_MODEL)
+    visualize(PATH_MODEL + "PPO2_" + str(nb_iter) + ".pkl")
 
 if __name__ == '__main__':
     main()
