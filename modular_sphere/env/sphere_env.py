@@ -131,11 +131,11 @@ class RobotSphereEnv(gym.Env):
             self.robot_sphere_goal.getRobotModel(),
             physicsClientId=self.robot_sphere.getPhysicsClientId()))
         if len(collision_detected) != 0:
-            reward += 20
+            reward += 10
             reward -= time.time() - self.time_init
             self.episode_over = True
         if distance > 15 or time.time() - self.time_init > 10:
-            reward += -20
+            reward += -10
             reward -= time.time() - self.time_init
             self.episode_over = True
         if self.distance_init == 0:
