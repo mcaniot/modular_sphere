@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 
 from stable_baselines.common.policies import MlpPolicy as PPO2MlpPolicy
+from stable_baselines.common.policies import MlpPolicy as MlpLstmPolicy
 from stable_baselines.ddpg.policies import MlpPolicy as DDPGMlpPolicy
 from stable_baselines.common.vec_env import DummyVecEnv
 from stable_baselines import PPO2
@@ -29,7 +30,7 @@ def init_model(gui=True):
     env = DummyVecEnv([lambda: env])
     if AGENT is "PPO2":
         model = PPO2(
-                 PPO2MlpPolicy,
+                 MlpLstmPolicy,
                  env,
                  n_steps=4096,
                  verbose=2,
@@ -85,9 +86,10 @@ def main():
     seed = int(time.time())
     np.random.seed(seed)
     # train the model
-    train(num_timesteps=int(1e6), seed=seed,
+    nb_iter = int(1e7)
+    train(num_timesteps=nb_iter, seed=seed,
           model_path=PATH_MODEL)
-    visualize(PATH_MODEL)
+    # visualize(PATH_MODEL + "PPO2_" + str(nb_iter) + ".pkl")
 
 if __name__ == '__main__':
     main()
