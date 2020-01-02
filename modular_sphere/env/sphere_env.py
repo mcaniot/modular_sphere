@@ -123,15 +123,25 @@ class RobotSphereEnv(gym.Env):
         obs = np.concatenate([robot_sphere_pos] + [robot_sphere_goal_pos])
         # Fill reward
         reward = 0
+        if self.time_init == 0:
+            self.time_init = time.time()
         distance = np.linalg.norm(robot_sphere_goal_pos - robot_sphere_pos)
-        if distance <= 0.5:
-            reward += 10
+        collision_detected = list(pybullet.getContactPoints(
+            self.robot_sphere.getRobotModel(),
+            self.robot_sphere_goal.getRobotModel(),
+            physicsClientId=self.robot_sphere.getPhysicsClientId()))
+        if len(collision_detected) != 0:
+            reward += 20
+            reward -= time.time() - self.time_init
             self.episode_over = True
-        if distance > 15:
+        if distance > 15 or time.time() - self.time_init > 10:
             reward += -20
+            reward -= time.time() - self.time_init
             self.episode_over = True
-
-        reward += -distance
+        if self.distance_init == 0:
+            self.distance_init = distance
+        reward += self.distance_init - distance
+        self.distance_init = distance
         return obs, reward
 
     def _setupScene(self):
@@ -152,6 +162,8 @@ class RobotSphereEnv(gym.Env):
             quaternion=[0,0,0,1],
             spawn_ground_plane=True)
         self.robot_sphere_goal.setColor([255, 0, 0, 0.8])
+        self.distance_init = 0
+        self.time_init = 0
 
     def _resetScene(self):
         """
@@ -171,6 +183,8 @@ class RobotSphereEnv(gym.Env):
             [0,0,0,1],
             physicsClientId=self.robot_sphere.getPhysicsClientId()
         )
+        self.distance_init = 0
+        self.time_init = 0
 
     def _termination(self):
         """
