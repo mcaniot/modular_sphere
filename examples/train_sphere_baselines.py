@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
-import sys
-try:
-    sys.path.remove('/opt/ros/kinetic/lib/python2.7/dist-packages')
-except Exception:
-    pass
 
+from datetime import datetime
 from env.sphere_env import RobotSphereEnv
 import numpy as np
 import time
-from datetime import datetime
 
 from stable_baselines.common.policies import MlpPolicy as PPO2MlpPolicy
 from stable_baselines.common.policies import MlpPolicy as MlpLstmPolicy
@@ -20,7 +15,6 @@ from stable_baselines import DDPG
 from stable_baselines.gail import generate_expert_traj
 from stable_baselines.gail import ExpertDataset
 
-ENV_ID = 'NaoBulletEnv'
 PATH_MODEL = 'data/models/'
 AGENT = "PPO2"
 
@@ -30,7 +24,7 @@ def init_model(gui=True):
     env = DummyVecEnv([lambda: env])
     if AGENT is "PPO2":
         model = PPO2(
-                 MlpLstmPolicy,
+                 PPO2MlpPolicy,
                  env,
                  n_steps=4096,
                  verbose=2,
@@ -61,10 +55,10 @@ def train(num_timesteps, seed, model_path=None):
     i = 0
     while i < num_timesteps:
         if i != 0:
-            model.load(model_path + "/" + AGENT + "_" + repr(i))
+            model.load(model_path + "/" + AGENT + "_test_" + repr(i))
         model.learn(total_timesteps=int(1e6))
         i += int(1e6)
-        model.save(model_path + "/" + AGENT + "_" + repr(i))
+        model.save(model_path + "/" + AGENT + "_test_" + repr(i))
     env.close()
 
 def visualize(name_model):
@@ -78,7 +72,7 @@ def visualize(name_model):
     obs = env.reset()
     while True:
         action, _states = model.predict(obs)
-        obs, rewards, dones, info = env.step(action)
+        obs, _, _, _ = env.step(action)
         env.render()
 
 
@@ -87,9 +81,9 @@ def main():
     np.random.seed(seed)
     # train the model
     nb_iter = int(2e6)
-    # train(num_timesteps=nb_iter, seed=seed,
-    #       model_path=PATH_MODEL)
-    visualize(PATH_MODEL + "PPO2_" + str(nb_iter) + ".pkl")
+    train(num_timesteps=nb_iter, seed=seed,
+          model_path=PATH_MODEL)
+    # visualize(PATH_MODEL + "PPO2_" + str(nb_iter) + ".pkl")
 
 if __name__ == '__main__':
     main()
