@@ -43,6 +43,13 @@ class RobotSphere(RobotVirtual):
     def getDeformation(self):
         pass
 
+    def getDimension(self):
+        visal_shape_data = p.getVisualShapeData(
+            self.robot_model,
+            physicsClientId=self.physics_client)
+        dimensions = visal_shape_data[0][3]
+        return dimensions[0]
+
     def getScale(self):
         return self.scale
 
