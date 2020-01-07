@@ -103,6 +103,10 @@ class RobotSphereClassTest(unittest.TestCase):
         self.assertTrue(
             init_dimension*RobotSphereClassTest.robot.getScale() ==\
             actual_dimensions[0])
+
+    def test_simu_gui(self):
+        client = RobotSphereClassTest.simulation.launchSimulation(gui=True)
+        RobotSphereClassTest.simulation.stopSimulation(client)
         
 
 if __name__ == "__main__":
