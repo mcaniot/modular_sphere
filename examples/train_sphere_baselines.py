@@ -24,7 +24,7 @@ def init_model(gui=True):
     env = DummyVecEnv([lambda: env])
     if AGENT is "PPO2":
         model = PPO2(
-                 PPO2MlpPolicy,
+                 MlpLstmPolicy,
                  env,
                  n_steps=4096,
                  verbose=2,
@@ -55,10 +55,10 @@ def train(num_timesteps, seed, model_path=None):
     i = 0
     while i < num_timesteps:
         if i != 0:
-            model.load(model_path + "/" + AGENT + "_test_" + repr(i))
+            model.load(model_path + "/" + AGENT + "_" + repr(i))
         model.learn(total_timesteps=int(1e6))
         i += int(1e6)
-        model.save(model_path + "/" + AGENT + "_test_" + repr(i))
+        model.save(model_path + "/" + AGENT + "_" + repr(i))
     env.close()
 
 def visualize(name_model):
@@ -83,7 +83,7 @@ def main():
     nb_iter = int(2e6)
     train(num_timesteps=nb_iter, seed=seed,
           model_path=PATH_MODEL)
-    # visualize(PATH_MODEL + "PPO2_" + str(nb_iter) + ".pkl")
+    # visualize(PATH_MODEL + "/" + AGENT + "_" + str(nb_iter) + ".pkl")
 
 if __name__ == '__main__':
     main()

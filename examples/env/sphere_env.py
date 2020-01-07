@@ -1,10 +1,5 @@
 #!/usr/bin/env python
 # coding: utf-8
-import sys
-# CV2_ROS = '/opt/ros/kinetic/lib/python2.7/dist-packages'
-# if CV2_ROS in sys.path:
-#     sys.path.remove(CV2_ROS)
-#     sys.path.append(CV2_ROS)
 import gym
 import time
 import numpy as np
@@ -16,6 +11,9 @@ from modular_sphere import SimulationManager
 
 OBS_DIM = 6
 ACT_DIM = 2
+RANGE_MIN_DIST = 0.5
+RANGE_MAX_DIST = 1.0
+FORCE = 1.0
 
 
 class RobotSphereEnv(gym.Env):
@@ -85,7 +83,7 @@ class RobotSphereEnv(gym.Env):
         np.clip(action, [-1]*ACT_DIM,
                 [1]*ACT_DIM)
         action.append(0)
-        self.robot_sphere.move(np.multiply(action, 100))
+        self.robot_sphere.move(np.multiply(action, FORCE))
         obs, reward = self._getState()
         return obs, reward, self.episode_over, {}
 
@@ -116,10 +114,12 @@ class RobotSphereEnv(gym.Env):
             self.robot_sphere.getPosition(),
             dtype=np.float32
         )
+        robot_sphere_pos[-1] = 0
         robot_sphere_goal_pos = np.array(
             self.robot_sphere_goal.getPosition(),
             dtype=np.float32
         )
+        robot_sphere_goal_pos[-1] = 0
         obs = np.concatenate([robot_sphere_pos] + [robot_sphere_goal_pos])
         # Fill reward
         reward = 0
@@ -131,16 +131,18 @@ class RobotSphereEnv(gym.Env):
             self.robot_sphere_goal.getRobotModel(),
             physicsClientId=self.robot_sphere.getPhysicsClientId()))
         if len(collision_detected) != 0:
-            reward += 10
-            reward -= time.time() - self.time_init
-            self.episode_over = True
-        if distance > 15 or time.time() - self.time_init > 10:
-            reward += -10
+            reward += 20
             reward -= time.time() - self.time_init
             self.episode_over = True
         if self.distance_init == 0:
             self.distance_init = distance
-        reward += self.distance_init - distance
+        if distance > RANGE_MAX_DIST*2 or time.time() - self.time_init > 10:
+            reward += -10
+            self.episode_over = True
+        if (self.distance_init - distance) > 0:
+            reward += 0.01
+        else:
+            reward -= 0.01
         self.distance_init = distance
         return obs, reward
 
@@ -151,19 +153,25 @@ class RobotSphereEnv(gym.Env):
         self.client = self.simulation_manager.launchSimulation(gui=self.gui)
         self.robot_sphere = self.simulation_manager.spawnRobotSphere(
             self.client,
-            translation=[0,0,1], quaternion=[0,0,0,1],
+            translation=[0, 0, 0.1], quaternion=[0, 0, 0, 1],
             spawn_ground_plane=True)
         self.robot_sphere_goal = self.simulation_manager.spawnRobotSphere(
             self.client,
             translation=[
-                [-1,1][random.randrange(2)] * random.randrange(5, 10),
-                [-1,1][random.randrange(2)] * random.randrange(5, 10), 1
+                [-1,1][random.randrange(2)] * random.uniform(
+                    RANGE_MIN_DIST,
+                    RANGE_MAX_DIST),
+                [-1,1][random.randrange(2)] * random.uniform(
+                    RANGE_MIN_DIST,
+                    RANGE_MAX_DIST), 0.1
             ],
-            quaternion=[0,0,0,1],
+            quaternion=[0, 0, 0, 1],
             spawn_ground_plane=True)
         self.robot_sphere_goal.setColor([255, 0, 0, 0.8])
-        self.distance_init = 0
         self.time_init = 0
+        self.distance_init = 0
+        self.robot_sphere.move([0,0,0])
+        time.sleep(0.5)
 
     def _resetScene(self):
         """
@@ -171,20 +179,26 @@ class RobotSphereEnv(gym.Env):
         """
         pybullet.resetBasePositionAndOrientation(
             self.robot_sphere.getRobotModel(),
-            [0,0,1], [0,0,0,1],
+            [0, 0, 0.1], [0, 0, 0, 1],
             physicsClientId=self.robot_sphere.getPhysicsClientId()
         )
         pybullet.resetBasePositionAndOrientation(
             self.robot_sphere_goal.getRobotModel(),
             [
-                [-1,1][random.randrange(2)] * random.randrange(5, 10),
-                [-1,1][random.randrange(2)] * random.randrange(5, 10), 1
+                [-1,1][random.randrange(2)] * random.uniform(
+                    RANGE_MIN_DIST,
+                    RANGE_MAX_DIST),
+                [-1,1][random.randrange(2)] * random.uniform(
+                    RANGE_MIN_DIST,
+                    RANGE_MAX_DIST), 0.1
             ],
-            [0,0,0,1],
-            physicsClientId=self.robot_sphere.getPhysicsClientId()
+            [0, 0, 0, 1],
+            physicsClientId=self.robot_sphere_goal.getPhysicsClientId()
         )
-        self.distance_init = 0
         self.time_init = 0
+        self.distance_init = 0
+        self.robot_sphere.move([0,0,0])
+        time.sleep(0.5)
 
     def _termination(self):
         """
