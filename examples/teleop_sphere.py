@@ -10,12 +10,12 @@ simulation_manager = SimulationManager()
 physicsClient = simulation_manager.launchSimulation(gui=True)
 sphere = simulation_manager.spawnRobotSphere(
                 physicsClient,
-                translation=[0,0,1], quaternion=[0,0,0,1],
+                translation=[0, 0, 0.1], quaternion=[0, 0, 0, 1],
                  spawn_ground_plane=True)
 forward = 0
 turn = 0
 
-forwardVec = 100
+forwardVec = 1.5
 cameraDistance = 1
 cameraYaw = 35
 cameraPitch = -35
