@@ -27,7 +27,12 @@ install:
   - "pip install numpy --upgrade"
   - "pip install qibullet"
   - "python setup.py install"
+  - "pip install codecov"
 
 script:
   - cd tests
-  - python main_test.py
+  - coverage run main_test.py
+
+# Push the results back to codecov
+after_success:
+  - codecov
