@@ -24,7 +24,7 @@ python:
 
 install:
   - "pip install pybullet"
-  - "pip install numpy"
+  - "pip install numpy --upgrade"
   - "pip install qibullet"
   - "python setup.py install"
 
