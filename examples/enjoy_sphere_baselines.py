@@ -2,9 +2,6 @@ from baselines_tools import *
 import os
 
 def main():
-    seed = int(time.time())
-    np.random.seed(seed)
-    # train the model
     path = None
     if os.path.isdir(PATH_MODEL_1):
         path = PATH_MODEL_1
@@ -14,8 +11,7 @@ def main():
         print("Can't find path to model: %s or %s"
               %(PATH_MODEL_1, PATH_MODEL_2))
         return -1
-    train(num_timesteps=NB_ITER, seed=seed,
-          model_path=path)
+    visualize(path + "/" + AGENT + "_" + str(NB_ITER) + ".pkl")
 
 if __name__ == '__main__':
     main()
