@@ -200,6 +200,9 @@ class RobotSphereEnv(gym.Env):
         self.robot_sphere.move([0,0,0])
         time.sleep(0.5)
 
+    def close(self):
+        self._termination()
+
     def _termination(self):
         """
         Terminates the environment
