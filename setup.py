@@ -2,7 +2,7 @@ import setuptools
 
 setuptools.setup(
     name='modular_sphere',
-    version='0.0.1',
+    version='0.0.2',
     author="Maxime Caniot",
     author_email="maxime.caniot@gmail.com",
     description="Bullet-based simulation for a modular sphere robot",
@@ -24,7 +24,6 @@ setuptools.setup(
     classifiers=[
         "License :: OSI Approved :: Apache Software License",
         "Programming Language :: Python :: 2.7",
-        "Programming Language :: Python :: 3.4",
         "Programming Language :: Python :: 3.5",
         "Programming Language :: Python :: 3.6",
         'Intended Audience :: Science/Research',
