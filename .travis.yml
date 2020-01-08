@@ -1,7 +1,3 @@
-branches:
-    only:
-      - master
-
 notifications:
     on_success: never
     on_failure: never
@@ -21,6 +17,12 @@ python:
   - "2.7"
   - "3.5"
   - "3.6"
+
+services:
+  - xvfb
+
+env:
+  - DISPLAY=:99.0
 
 install:
   - "pip install pybullet"
