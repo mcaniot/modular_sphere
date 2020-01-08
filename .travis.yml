@@ -18,11 +18,11 @@ python:
   - "3.5"
   - "3.6"
 
+services:
+  - xvfb
+
 env:
   - DISPLAY=:99.0
-
-before_install:
-  - sh -e /etc/init.d/xvfb start
 
 install:
   - "pip install pybullet"
