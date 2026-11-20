@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>modular-sphere — code architecture</title>
+<style>
+  :root { --bg:#0f1720; --card:#16212d; --fg:#e3e9ef; --mut:#93a4b5; --acc:#f08a24; --acc2:#4fb3d9; --ok:#5cc98a; --line:#2a3a4b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:32px 6vw 20px; border-bottom:1px solid var(--line); }
+  header h1 { margin:0 0 6px; font-size:28px; }
+  header p { margin:0; color:var(--mut); }
+  nav { position:sticky; top:0; z-index:2; background:#0f1720ee; backdrop-filter:blur(4px); padding:10px 6vw; border-bottom:1px solid var(--line); display:flex; flex-wrap:wrap; gap:14px; }
+  nav a { color:var(--acc2); text-decoration:none; font-size:14px; }
+  main { padding:10px 6vw 60px; max-width:1200px; }
+  h2 { margin-top:42px; padding-bottom:6px; border-bottom:2px solid var(--acc); display:inline-block; }
+  h3 { margin:22px 0 8px; color:var(--acc); }
+  code, pre { font-family: ui-monospace, "JetBrains Mono", Menlo, monospace; }
+  code { background:#0b121a; padding:1px 5px; border-radius:4px; font-size:13px; }
+  pre { background:#0b121a; border:1px solid var(--line); border-radius:8px; padding:12px 14px; overflow-x:auto; font-size:13px; line-height:1.45; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr)); gap:16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+  .card h4 { margin:0 0 6px; font-size:15px; }
+  .card h4 code { color:var(--acc); background:none; padding:0; font-size:14px; }
+  .card p { margin:4px 0; color:var(--mut); font-size:14px; }
+  .tag { display:inline-block; font-size:11px; padding:1px 7px; border-radius:10px; margin-left:6px; vertical-align:middle; }
+  .t-core { background:#f08a2433; color:var(--acc); } .t-wm { background:#4fb3d933; color:var(--acc2); }
+  .t-io { background:#5cc98a33; color:var(--ok); } .t-opt { background:#b48ef033; color:#c8a8ff; }
+  table { border-collapse:collapse; width:100%; margin:8px 0 16px; font-size:14px; }
+  th, td { border:1px solid var(--line); padding:6px 10px; text-align:left; vertical-align:top; }
+  th { background:#1c2a38; }
+  .note { border-left:3px solid var(--acc2); background:#14222f; padding:8px 12px; border-radius:0 8px 8px 0; color:var(--mut); }
+  .warn { border-left-color:var(--acc); }
+  svg text { font-family: system-ui, sans-serif; }
+  .flow { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:10px 0; }
+  .flow span { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:6px 10px; font-size:13px; }
+  .flow b { color:var(--acc); }
+</style>
+</head>
+<body>
+<header>
+  <h1>modular-sphere — how the code is organized</h1>
+  <p>Simulated robotic sphere on MuJoCo 4, Gymnasium environments and a test bench for <i>world models</i>.
+     ~1,000 lines of Python in <code>src/modular_sphere/</code>, ~550 lines of tests.</p>
+</header>
+<nav>
+  <a href="#vue">Overview</a><a href="#sim">Simulation</a><a href="#env">Environment</a>
+  <a href="#courses">Courses</a><a href="#data">Data</a><a href="#wm">World models</a>
+  <a href="#render">Rendering</a><a href="#cli">CLI</a><a href="#tests">Tests</a>
+  <a href="#tools">Tools</a><a href="#flux">Full flow</a>
+</nav>
+<main>
+
+<h2 id="vue">1. Overview</h2>
+<p>The package is layered: an MJCF physics model, a Gymnasium environment that wraps it,
+then tools (collection, evaluation, rendering, teleoperation) that only talk to the environment.</p>
+
+<svg viewBox="0 0 1000 400" width="100%" role="img" aria-label="Module diagram">
+  <defs><marker id="a" markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="#93a4b5"/></marker></defs>
+  <g font-size="13" fill="#e3e9ef">
+    <rect x="390" y="10" width="220" height="48" rx="8" fill="#1c2a38" stroke="#5cc98a"/>
+    <text x="500" y="31" text-anchor="middle">cli.py</text><text x="500" y="49" text-anchor="middle" fill="#93a4b5" font-size="11">teleop · record · collect · eval-wm</text>
+
+    <rect x="30" y="110" width="170" height="48" rx="8" fill="#1c2a38" stroke="#5cc98a"/>
+    <text x="115" y="131" text-anchor="middle">teleop.py</text><text x="115" y="149" text-anchor="middle" fill="#93a4b5" font-size="11">viewer + arrow keys</text>
+    <rect x="230" y="110" width="170" height="48" rx="8" fill="#1c2a38" stroke="#5cc98a"/>
+    <text x="315" y="131" text-anchor="middle">render.py</text><text x="315" y="149" text-anchor="middle" fill="#93a4b5" font-size="11">classic · Filament · MP4</text>
+    <rect x="430" y="110" width="170" height="48" rx="8" fill="#1c2a38" stroke="#5cc98a"/>
+    <text x="515" y="131" text-anchor="middle">dataset.py</text><text x="515" y="149" text-anchor="middle" fill="#93a4b5" font-size="11">collect · npz</text>
+    <rect x="630" y="110" width="170" height="48" rx="8" fill="#1c2a38" stroke="#4fb3d9"/>
+    <text x="715" y="131" text-anchor="middle">world_model.py</text><text x="715" y="149" text-anchor="middle" fill="#93a4b5" font-size="11">baselines · evaluate</text>
+    <rect x="820" y="110" width="160" height="48" rx="8" fill="#1c2a38" stroke="#b48ef0"/>
+    <text x="900" y="131" text-anchor="middle">torch_world_model.py</text><text x="900" y="149" text-anchor="middle" fill="#93a4b5" font-size="11">MLP (extra torch)</text>
+
+    <rect x="250" y="220" width="250" height="52" rx="8" fill="#1c2a38" stroke="#f08a24"/>
+    <text x="375" y="242" text-anchor="middle">env.py — SphereReachEnv</text><text x="375" y="261" text-anchor="middle" fill="#93a4b5" font-size="11">Gymnasium MujocoEnv, obs 11D</text>
+    <rect x="560" y="220" width="250" height="52" rx="8" fill="#1c2a38" stroke="#f08a24"/>
+    <text x="685" y="242" text-anchor="middle">courses.py — SphereCourseEnv</text><text x="685" y="261" text-anchor="middle" fill="#93a4b5" font-size="11">L1–L5 via MjSpec, obs 13D</text>
+
+    <rect x="330" y="330" width="340" height="52" rx="8" fill="#1c2a38" stroke="#f08a24"/>
+    <text x="500" y="352" text-anchor="middle">assets/sphere_arena.xml</text><text x="500" y="371" text-anchor="middle" fill="#93a4b5" font-size="11">MuJoCo physics + visuals + Filament lights</text>
+  </g>
+  <g stroke="#93a4b5" stroke-width="1.4" fill="none" marker-end="url(#a)">
+    <path d="M440,58 L120,108"/><path d="M470,58 L320,108"/><path d="M510,58 L515,108"/><path d="M560,58 L710,108"/>
+    <path d="M115,158 L320,218"/><path d="M315,158 L360,218"/><path d="M515,158 L420,218"/><path d="M715,158 L440,218"/>
+    <path d="M820,134 L803,134" stroke-dasharray="4 3"/>
+    <path d="M685,220 L500,246"/>
+    <path d="M375,272 L460,328"/><path d="M685,272 L560,328"/>
+  </g>
+  <g font-size="11" fill="#93a4b5"><text x="822" y="100">implements WorldModel ←</text><text x="560" y="300">inherits + edits the XML</text></g>
+</svg>
+
+<div class="grid">
+  <div class="card"><h4><code>assets/sphere_arena.xml</code><span class="tag t-core">physics</span></h4><p>The world: sphere, arena, goal, lights, cameras. Single source of truth for the physics.</p></div>
+  <div class="card"><h4><code>env.py</code><span class="tag t-core">core</span></h4><p>Gymnasium "reach the goal" environment. Defines observation, action, reward.</p></div>
+  <div class="card"><h4><code>courses.py</code><span class="tag t-core">core</span></h4><p>5 obstacle courses built programmatically on top of the arena, plus a scripted driver.</p></div>
+  <div class="card"><h4><code>dataset.py</code><span class="tag t-io">data</span></h4><p>Exploration policy, trajectory collection, <code>.npz</code> save/load.</p></div>
+  <div class="card"><h4><code>world_model.py</code><span class="tag t-wm">eval</span></h4><p><code>WorldModel</code> interface, baseline models, multi-horizon RMSE metric.</p></div>
+  <div class="card"><h4><code>torch_world_model.py</code><span class="tag t-opt">optional</span></h4><p>PyTorch dynamics MLP (PETS/MBPO style), installed with the <code>torch</code> extra.</p></div>
+  <div class="card"><h4><code>render.py</code><span class="tag t-io">video</span></h4><p>Classic OpenGL or Filament PBR rendering, MP4 recording via imageio.</p></div>
+  <div class="card"><h4><code>teleop.py</code> · <code>cli.py</code><span class="tag t-io">tools</span></h4><p>Keyboard control in the MuJoCo viewer; <code>modular-sphere</code> entry point.</p></div>
+</div>
+
+<h2 id="sim">2. The simulation — <code>sphere_arena.xml</code></h2>
+<p>One MJCF file describes everything MuJoCo simulates. The robot is not a "free" sphere: it is guided by
+<b>three slide joints</b> (x, y, z) and <b>one ball joint</b> ("roll"). Two motors push on the x and y slides: that is the action.</p>
+<pre>&lt;body name="sphere"&gt;
+  &lt;joint name="slide_x" type="slide" axis="1 0 0" damping="0.69"/&gt;   ← viscous friction
+  &lt;joint name="slide_y" type="slide" axis="0 1 0" damping="0.69"/&gt;
+  &lt;joint name="slide_z" type="slide" axis="0 0 1"/&gt;                  ← can bounce off a wall
+  &lt;joint name="roll"    type="ball"/&gt;                                ← rolls without slipping
+  &lt;geom type="sphere" size="0.1" mass="0.3" material="sphere" …/&gt;
+&lt;/body&gt;
+&lt;motor name="force_x" joint="slide_x" ctrlrange="-1 1" gear="1"/&gt;   ← action[0] in N
+&lt;motor name="force_y" joint="slide_y" ctrlrange="-1 1" gear="1"/&gt;   ← action[1] in N</pre>
+<table>
+  <tr><th>Parameter</th><th>Value</th><th>Why</th></tr>
+  <tr><td>Physics step</td><td>2 ms, <code>implicitfast</code> integrator</td><td>stable with damping and contacts</td></tr>
+  <tr><td>Control</td><td>25 physics steps per action → 20 Hz</td><td><code>dt = 0.05 s</code></td></tr>
+  <tr><td>Sphere</td><td>r = 0.1 m, m = 0.3 kg, solid-sphere inertia</td><td>effective rolling mass = 1.4 m</td></tr>
+  <tr><td>Damping</td><td>0.69 N·s/m</td><td>equivalent to the former PyBullet <code>linearDamping 0.9</code></td></tr>
+  <tr><td>Terminal velocity</td><td>F/c = 1/0.69 ≈ 1.45 m/s</td><td>checked by <code>test_physics.py</code> (&lt; 2 %)</td></tr>
+  <tr><td>Goal</td><td>red <i>mocap</i> body, no collision</td><td>visual marker, moved by the env</td></tr>
+</table>
+<p>The file also holds the visual part (sky, checkerboard, shadows, two lights, <code>overview</code>, <code>top</code> and <code>track</code> cameras)
+and <code>&lt;numeric name="filament.fallback.*"&gt;</code> entries that set the lighting of the Filament engine.</p>
+
+<h2 id="env">3. The environment — <code>env.py</code></h2>
+<p><code>SphereReachEnv</code> inherits from <code>gymnasium.envs.mujoco.MujocoEnv</code>, which already handles model loading,
+<code>do_simulation</code>, rendering and seeding. The code only adds what is specific to the task.</p>
+<h3>Observation (11 values, world frame)</h3>
+<table>
+  <tr><th>Indices</th><th>Name (<code>OBS_SLICES</code>)</th><th>Content</th></tr>
+  <tr><td>0–2</td><td><code>pos</code></td><td>position x, y, z [m]</td></tr>
+  <tr><td>3–5</td><td><code>vel</code></td><td>linear velocity [m/s]</td></tr>
+  <tr><td>6–8</td><td><code>ang_vel</code></td><td>angular velocity, rotated from the body frame to the world frame [rad/s]</td></tr>
+  <tr><td>9–10</td><td><code>goal_rel</code></td><td>goal − position, in x, y [m]</td></tr>
+</table>
+<div class="note">This observation is a <b>complete Markov state</b>: given the observation and the action, the next state is determined
+(the sphere's orientation does not influence the physics). This is what lets the "oracle" model replay the simulation exactly.</div>
+<h3>One environment step</h3>
+<pre>def step(self, action):
+    ctrl = np.clip(action, -1.0, 1.0)              # force x, y in newtons
+    self.do_simulation(ctrl, self.frame_skip)       # 25 × 2 ms
+    dist = self._dist()
+    success = dist &lt; SUCCESS_DIST                   # 0.2 m
+    reward = (self._prev_dist - dist) - STEP_PENALTY + SUCCESS_BONUS * success
+    #          progress toward goal      - 0.01/step    + 10 if reached
+    return obs, reward, terminated=success, truncated=False, {"distance", "is_success"}</pre>
+<p>Truncation at 200 steps is added by <code>gym.make</code> (<code>max_episode_steps</code> declared in <code>__init__.py</code>).
+<code>sample_goal()</code> draws a goal with |x|, |y| ∈ [0.5, 1.0] m and random signs. <code>set_from_obs(obs)</code> is the inverse
+of the observation: it puts the simulator back in the described state (used by the oracle).</p>
+
+<h2 id="courses">4. The courses — <code>courses.py</code></h2>
+<p>Rather than duplicating the XML, each level starts from the arena and edits it with the <code>mujoco.MjSpec</code> API
+(<code>add_geom</code>, <code>add_body</code>, <code>add_joint</code>, <code>add_actuator</code>), plugged into Gymnasium's
+<code>_initialize_simulation</code> hook.</p>
+<p><img src="images/courses_top.png" alt="Courses L1 to L5 seen from above" style="width:100%;border-radius:6px"></p>
+<pre>def _initialize_simulation(self):
+    spec = mujoco.MjSpec.from_file(MODEL_PATH)       # base arena
+    spec.body("sphere").pos = (*self.level.start, 0.1)
+    self.level.build(spec)                           # _l1 … _l5: walls, tunnel, ramps, door
+    model = spec.compile()
+    return model, mujoco.MjData(model)</pre>
+<table>
+  <tr><th>Level</th><th>Obstacle</th><th>Required skill</th><th>Max steps</th></tr>
+  <tr><td>L1 baffle</td><td>wall across the arena, opening on one side</td><td>go around</td><td>200</td></tr>
+  <tr><td>L2 tunnel</td><td>only opening: 0.4 × 0.26 m tunnel</td><td>aim for a narrow passage</td><td>200</td></tr>
+  <tr><td>L3 bridge</td><td>13 cm low wall that cannot be crossed, deck at 18 cm on 10° ramps</td><td>slow down on slopes, stay within 40 cm width</td><td>250</td></tr>
+  <tr><td>L4 gate</td><td>floor pressure plate that opens a sliding door</td><td>deliberate detour (moving away from the goal)</td><td>300</td></tr>
+  <tr><td>L5 combined</td><td>plate → door → bridge → tunnel</td><td>chain everything</td><td>600</td></tr>
+</table>
+<p>The observation grows to <b>13 values</b>: the 11 base ones + <code>button</code> (0/1, latched once pressed) + <code>door</code>
+(opening 0–1). The door is a real MuJoCo slide joint driven by a position actuator; the env sets its target in
+<code>do_simulation</code>. Only the sphere's two motors are in the action space.</p>
+<p><code>WaypointPolicy</code> is a scripted driver: it aims at the level's next waypoint with a desired speed
+(braking on approach), proportional feedback on velocity and damping compensation
+(<code>F = 3·(v_des − v) + 0.69·v_des</code>). It serves as proof that every level is feasible.</p>
+<div class="note warn">The reward is still "distance to goal": it ignores walls. On L4/L5, rushing toward the goal is a local trap
+(the sphere must first go to the plate) — this is intended, to test exploration.</div>
+
+<h2 id="data">5. The data — <code>dataset.py</code></h2>
+<div class="flow"><span><b>exploration_action</b>: OU noise OR noisy PD</span>→<span><b>collect</b>: N episodes × T steps</span>→<span><b>TrajectoryDataset</b></span>→<span><b>.npz</b> + JSON metadata</span></div>
+<ul>
+  <li><b>Exploration</b>: half of the episodes use Ornstein-Uhlenbeck noise (smooth random motion), the other half a noisy PD controller
+      <code>2·goal_rel − vel</code>. This covers diverse states <i>and</i> useful trajectories.</li>
+  <li><b>Fixed length</b>: episodes are not cut at success, to get regular arrays
+      <code>obs (E, T+1, 11)</code>, <code>actions (E, T, 2)</code>.</li>
+  <li><b>Validation</b>: <code>TrajectoryDataset</code> is a frozen dataclass that checks shape consistency at construction.</li>
+</ul>
+
+<h2 id="wm">6. The world models — <code>world_model.py</code>, <code>torch_world_model.py</code></h2>
+<p>A <i>world model</i> predicts the future from the initial state and the actions. The contract is deliberately minimal:</p>
+<pre>class WorldModel(Protocol):
+    def rollout(self, obs0: (B, 11), actions: (B, H, 2)) -&gt; (B, H, 11): ...
+    # fit(dataset) optional: the CLI calls it if the method exists</pre>
+<table>
+  <tr><th>Model</th><th>Principle</th><th>Role</th></tr>
+  <tr><td><code>oracle</code></td><td>puts MuJoCo back in the state (<code>set_from_obs</code>) and replays the actions</td><td>lower bound: error ≈ 0 (&lt; 1e-6)</td></tr>
+  <tr><td><code>constant-velocity</code></td><td>the sphere keeps moving in a straight line</td><td>upper bound: "no physics"</td></tr>
+  <tr><td><code>linear</code></td><td>ridge regression: <code>Δobs = W·[obs, action, 1]</code></td><td>simplest learned baseline</td></tr>
+  <tr><td><code>mlp</code></td><td>SiLU 3×256 network predicting the normalized Δobs, AdamW + cosine, autoregressive rollout</td><td>neural world model (PETS/MBPO without ensemble)</td></tr>
+</table>
+<p><code>evaluate(model, dataset, horizons, stride)</code> splits the evaluation trajectories into sliding windows, runs
+<code>rollout</code> open-loop, and returns the RMSE per horizon and per group (<code>pos</code>, <code>vel</code>, <code>ang_vel</code>,
+<code>goal_rel</code>, <code>all</code>). A good model lies between <code>constant-velocity</code> and <code>oracle</code>, and its error
+grows slowly with the horizon.</p>
+<pre>MLPWorldModel.fit:    x = [(obs − μ)/σ, action]   y = (Δobs − μΔ)/σΔ   loss = MSE(net(x), y)
+MLPWorldModel.rollout: obs ← obs + net(x)·σΔ + μΔ    (repeated H times)</pre>
+
+<h2 id="render">7. Rendering — <code>render.py</code></h2>
+<div class="grid">
+  <div class="card"><h4><code>ClassicRenderer</code></h4><p>10-line adapter over <code>mujoco.Renderer</code> (OpenGL via EGL, OSMesa or GLFW depending on <code>MUJOCO_GL</code>).
+     Also used for Gymnasium image observations.</p></div>
+  <div class="card"><h4><code>FilamentRenderer</code></h4><p>Physically based (PBR) rendering from MuJoCo 4: <code>mjrf.Context</code> → <code>Renderer</code> → <code>ModelScene</code> → <code>View</code>.
+     Adds the headlamp in lux like MuJoCo Studio. Requires Python ≥ 3.12 and an X display.</p></div>
+  <div class="card"><h4><code>record()</code> + <code>write_mp4()</code></h4><p>Runs the exploration policy, captures one frame per step, encodes to H.264 with
+     <code>imageio</code> + the ffmpeg bundled with <code>imageio-ffmpeg</code>.</p></div>
+</div>
+<p>Both engines follow the same small <code>FrameRenderer</code> protocol (<code>render(data, camera)</code>, <code>close()</code>),
+selected by <code>make_renderer("classic" | "filament", …)</code>.</p>
+
+<h2 id="cli">8. The command line — <code>cli.py</code>, <code>teleop.py</code></h2>
+<table>
+  <tr><th>Command</th><th>Does</th></tr>
+  <tr><td><code>modular-sphere teleop</code></td><td>opens the passive MuJoCo viewer; arrows = force (held 0.25 s), <code>N</code> = new goal</td></tr>
+  <tr><td><code>modular-sphere record --out x.mp4 [--renderer filament] [--camera track]</code></td><td>video of a rollout</td></tr>
+  <tr><td><code>modular-sphere collect --out d.npz --episodes 200</code></td><td>dataset</td></tr>
+  <tr><td><code>modular-sphere eval-wm --model mlp --train-data … --eval-data …</code></td><td>trains if needed, then prints the RMSEs as JSON</td></tr>
+</table>
+<p>A model is plugged in through a factory: <code>--model modular_sphere.module:factory</code> (imports restricted to the <code>modular_sphere</code> package).</p>
+
+<h2 id="tests">9. The tests — <code>tests/</code></h2>
+<table>
+  <tr><th>File</th><th>What is checked</th></tr>
+  <tr><td><code>test_env.py</code></td><td>Gymnasium API conformance, seed and goal range, push → rolling, walls, success + bonus, <code>rgb_array</code> rendering</td></tr>
+  <tr><td><code>test_physics.py</code></td><td>response against the analytical rolling model, free decay, saturation, time-step convergence,
+      wall impacts (penetration, bounce, velocity bounded), zero-action negative control</td></tr>
+  <tr><td><code>test_world_model.py</code></td><td>dataset shapes and round trip, exact oracle, <code>linear</code> &lt; <code>constant-velocity</code>, CLI</td></tr>
+  <tr><td><code>test_torch_world_model.py</code></td><td>loss decreases, MLP &lt; constant-velocity, identical checkpoint, CLI (skipped without PyTorch)</td></tr>
+  <tr><td><code>test_courses.py</code></td><td>each level solved by the driver, negative controls fail, door blocks then opens, physical bounds</td></tr>
+  <tr><td><code>test_render.py</code></td><td>non-empty images on 3 cameras, 10-frame H.264 MP4, Filament image (skipped without display/3.12)</td></tr>
+  <tr><td><code>test_teleop.py</code></td><td>fake viewer: right arrow → the sphere moves along +x</td></tr>
+  <tr><td><code>test_tools.py</code></td><td>course collection (API and CLI, invalid level rejected), <code>--model</code> import allowlist,
+      <code>eval_gui</code>: driver + oracle ghost, fake viewer, MP4 export, wrong-dimension model rejected</td></tr>
+  <tr><td><code>test_error_paths.py</code></td><td>CLI errors (unknown model, no PyTorch, no <code>rollout</code>, no <code>--train-data</code>),
+      invalid observation shape, untrained models, MLP CPU fallback</td></tr>
+</table>
+<p>GitHub CI (<code>.github/workflows/ci.yml</code>) runs ruff then pytest with coverage (<code>pytest-cov</code>, uploaded to Codecov
+from Python 3.12) on Python 3.11 and 3.12, without GPU (OSMesa + Xvfb, CPU PyTorch). Locally:
+<code>uv run pytest --cov</code> (100 %, Filament subprocess included via <code>patch = ["subprocess"]</code>).</p>
+
+<h2 id="tools">9 bis. Additional tools</h2>
+<div class="grid">
+  <div class="card"><h4><code>tools/collect_courses.py</code><span class="tag t-io">data</span></h4><p>Data collection for the 5 course levels. Uses the same exploration policy (OU + PD) as <code>dataset.py</code> but adapted to the 13D course observations.</p></div>
+  <div class="card"><h4><code>tools/eval_gui.py</code><span class="tag t-io">visualization</span></h4><p>Interactive evaluation with the MuJoCo viewer. Lets you watch the model in action, try different policies (PD, random, waypoint; open-loop ghost prediction re-anchored every <code>--horizon</code> steps), and record videos. Supports the basic reach environment and all course levels.</p></div>
+</div>
+
+<h2 id="flux">10. The full flow</h2>
+<div class="flow">
+  <span><b>XML</b> physics</span>→<span><b>SphereReachEnv</b> / <b>SphereCourseEnv</b></span>→<span><b>collect</b> (train / eval, disjoint seeds)</span>→
+  <span><b>model.fit</b>(train)</span>→<span><b>evaluate</b>(model, eval)</span>→<span>RMSE per horizon vs oracle / constant-velocity</span>
+</div>
+<pre>uv run modular-sphere collect --out data/train.npz --episodes 200 --seed 0
+uv run modular-sphere collect --out data/eval.npz  --episodes 50  --seed 10000
+uv run modular-sphere eval-wm --model mlp --train-data data/train.npz --eval-data data/eval.npz</pre>
+<div class="note">To test your own world model: write a class with <code>rollout</code> (and <code>fit</code> if it learns),
+a no-argument function that builds it, then <code>--model modular_sphere.module:factory</code> (imports restricted to the <code>modular_sphere</code> package).</div>
+
+</main>
+</body>
+</html>
