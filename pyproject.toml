@@ -1,0 +1,58 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "modular-sphere"
+version = "1.0.0"
+description = "MuJoCo simulation of a modular sphere robot and a world-model test bench"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Maxime Caniot" }]
+requires-python = ">=3.11"
+dependencies = [
+    "mujoco>=4",
+    "imageio[ffmpeg]>=2.38",
+    "gymnasium[mujoco]>=1.0",
+    "numpy>=1.24",
+]
+keywords = ["mujoco", "robotics", "world model", "model-based RL", "gymnasium"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.optional-dependencies]
+torch = ["torch>=2.4"]
+filament = ["mujoco-studio>=4"]  # Required for Filament PBR rendering
+dev = ["pytest>=8", "pytest-cov>=5", "coverage>=7.10", "ruff>=0.6"]
+
+[project.scripts]
+modular-sphere = "modular_sphere.cli:main"
+
+[project.urls]
+Repository = "https://github.com/mcaniot/modular_sphere"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/modular_sphere"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "NPY", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["modular_sphere"]
+branch = true
+patch = ["subprocess"]  # measure the Filament smoke test, run in a child process
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = ["if __name__ == .__main__.:"]
