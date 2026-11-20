@@ -1,24 +1,203 @@
-# Modular Sphere project [![Build Status](https://travis-ci.com/mcaniot/modular_sphere.svg?branch=master)](https://travis-ci.com/mcaniot/modular_sphere)  [![codecov](https://codecov.io/gh/mcaniot/modular_sphere/branch/master/graph/badge.svg)](https://codecov.io/gh/mcaniot/modular_sphere)
+# Modular Sphere
 
+[![CI](https://github.com/mcaniot/modular_sphere/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/mcaniot/modular_sphere/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/mcaniot/modular_sphere/branch/main/graph/badge.svg)](https://codecov.io/gh/mcaniot/modular_sphere)
+![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue)
+![MuJoCo](https://img.shields.io/badge/MuJoCo-4-orange)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 
-The project is to create a modular soft robot able to adapt and collaborate in swarm.
+MuJoCo simulation of a spherical robot and a test bench for *world models* (learned dynamics
+models) on a deterministic Gymnasium environment.
 
-## Install
+<p align="center">
+  <img src="docs/images/reach_overview.png" width="62%" alt="Reach task: sphere and red goal in the 4 × 4 m arena">
+  <img src="docs/images/course_l5.gif" width="30%" alt="Scripted pilot solving course L5 (plate, door, bridge, tunnel)">
+</p>
 
-Use the setup.py to install the libraries:
+Detailed architecture: [`docs/architecture.html`](docs/architecture.html). Regenerate the
+illustrations with `MUJOCO_GL=egl uv run python docs/make_figures.py`.
 
-`sudo python setup.py install`
+## Installation
 
-## Examples
+```bash
+uv sync --extra dev                   # or: pip install -e ".[dev]"
+uv sync --extra dev --extra torch     # + PyTorch MLP world model
+uv sync --extra dev --extra filament  # + Filament PBR renderer (needs Python >= 3.12)
+```
 
-Teleoperate the modular sphere with the keyboard arrow keys:
+Python ≥ 3.11 (MuJoCo 4). Classic offscreen rendering: `MUJOCO_GL=egl` (GPU) or
+`MUJOCO_GL=osmesa` (CPU, package `libosmesa6`). Videos are encoded to H.264 by `imageio` with
+the ffmpeg binary bundled by `imageio-ffmpeg` (no system ffmpeg needed).
 
-`python examples/teleop_sphere.py`
+## Usage
 
-Train the sphere to navigate to a specific goal (need to install [stable_baselines](https://stable-baselines.readthedocs.io/en/master/guide/install.html) with specific version of Tensorflow (from 1.8.0 to 1.14.0)):
+```bash
+# Interactive control
+uv run modular-sphere teleop                                   # arrows = force, N = new goal
 
-`python examples/train_sphere_baselines.py`
+# Data collection
+uv run modular-sphere collect --out data/train.npz --episodes 200 --seed 0
+uv run modular-sphere collect --out data/eval.npz  --episodes 50  --seed 10000
 
-You can see the result with the models pretrained:
+# Course data collection (levels 1-5)
+uv run python -m modular_sphere.tools.collect_courses --all-levels --episodes 100 --out-dir data/courses
 
-`python examples/enjoy_sphere_baselines.py`
+# World model evaluation
+uv run modular-sphere eval-wm --model linear --train-data data/train.npz --eval-data data/eval.npz
+uv run modular-sphere eval-wm --model mlp    --train-data data/train.npz --eval-data data/eval.npz
+
+# GUI evaluation
+uv run python -m modular_sphere.tools.eval_gui              # basic reach in the MuJoCo viewer
+uv run python -m modular_sphere.tools.eval_gui --level 1    # course L1
+uv run python -m modular_sphere.tools.eval_gui --level 1 --model models/mlp_world_model_course_l1.pt  # trained model
+uv run python -m modular_sphere.tools.eval_gui --record demo.mp4  # record a video
+
+# Video rendering
+uv run modular-sphere record --out demo.mp4 --renderer filament --camera overview
+```
+
+### Rendering
+
+- `classic`: `mujoco.Renderer` (OpenGL), also used for `render_mode="rgb_array"`.
+- `filament`: MuJoCo 4 physically based rendering (PBR) via `mujoco.rendering.filament`, following
+  the [MuJoCo Python docs](https://mujoco.readthedocs.io/en/latest/python.html). Requires
+  Python ≥ 3.12 (MuJoCo 4.0.1 imports `collections.abc.Buffer`, missing in 3.11) and an X display:
+  a GPU session, or Mesa llvmpipe under `xvfb-run` without GPU. Video export only; image
+  observations stay on the classic renderer. Lighting is set by the `filament.fallback.*`
+  `<numeric>` entries of `sphere_arena.xml`.
+
+```python
+import gymnasium as gym
+import modular_sphere
+
+env = gym.make(modular_sphere.ENV_ID)  # "ModularSphere/Reach-v0"
+# Image observations: gym.wrappers.AddRenderObservation(gym.make(..., render_mode="rgb_array"))
+```
+
+### Obstacle courses
+
+`ModularSphere/Course-L{1..5}-v0` (`modular_sphere.courses.SphereCourseEnv`): same sphere, same
+action, goal drawn in the finish zone (x ∈ [1.4, 1.9] m), levels built on the arena with
+`mujoco.MjSpec`, increasing difficulty:
+
+![Courses L1 to L5 seen from above](docs/images/courses_top.png)
+*`top` view of levels L1 to L5: sphere (orange), goal (red), plate (yellow), bridge (light
+orange), tunnel (brown).*
+
+| Level | Obstacle | Max steps |
+| --- | --- | --- |
+| L1 | wall to go around through a side opening | 200 |
+| L2 | only passage: 0.4 m × 0.26 m tunnel | 200 |
+| L3 | unclimbable low wall, 0.4 m wide bridge on 10° ramps (falls are recoverable) | 250 |
+| L4 | floor plate (latched once pressed) that opens a sliding door | 300 |
+| L5 | plate + door, bridge, then tunnel | 600 |
+
+13-D observation: the 11 base components, `button` (0/1) and `door` (opening 0–1).
+`WaypointPolicy` (PD on waypoints) solves every level; zero, random and straight-to-goal actions
+fail (`tests/test_courses.py`).
+
+## Simulation contract
+
+| Item | Value |
+| --- | --- |
+| Physics | MuJoCo, 2 ms timestep, `implicitfast` integrator |
+| Control | `frame_skip=25` → 20 Hz (`dt = 0.05 s`), episode truncated at 200 steps (10 s) |
+| Action (2) | world-frame x, y force in N, bounded to [-1, 1] |
+| Observation (11) | `pos` x,y,z [m] · `vel` x,y,z [m/s] · `ang_vel` x,y,z [rad/s] · `goal_rel` x,y [m], all in the world frame (`OBS_SLICES`) |
+| Sphere | radius 0.10 m, mass 0.300 kg, solid-sphere inertia, viscous damping 0.69 N·s/m in x/y |
+| Arena | 4 × 4 m enclosed by walls |
+| Goal | visual sphere without collision, \|x\|, \|y\| ∈ [0.5, 1.0] m, random signs |
+| Reward | `(d_prev − d) − 0.01 + 10·success`; `terminated` when `d < 0.2 m` (the two spheres touch) |
+
+The observation is the full Markov state of the dynamics (the sphere is symmetric, its
+orientation does not affect the physics): `MuJoCoOracleModel` replays the simulation from an
+observation and is the zero-error reference (< 1e-6).
+
+## Testing a world model
+
+A model implements `rollout(obs0 (B, 11), actions (B, H, 2)) -> (B, H, 11)` and, if it learns,
+`fit(dataset: TrajectoryDataset)`. Pass it to the CLI with `--model modular_sphere.module:factory`
+(zero-argument factory); for safety, only modules of the `modular_sphere` package can be
+imported.
+
+`eval-wm` computes the open-loop RMSE for each horizon and each observation group over sliding
+windows of the evaluation set. Provided references: `oracle` (ground truth), `linear` (ridge
+regression on deltas), `constant-velocity` (no physics), `mlp` (`torch` extra).
+
+`MLPWorldModel` (`modular_sphere.torch_world_model`) follows the one-step dynamics model of PETS
+(Chua et al., 2018) and MBPO (Janner et al., 2019): a SiLU MLP predicting the normalized delta
+`obs[t+1] − obs[t]`, trained with MSE (AdamW, cosine schedule), rolled out autoregressively;
+`save`/`load` as a PyTorch checkpoint. Deviation from these references: a single deterministic
+network, no probabilistic ensemble. Libraries ruled out: `mbrl-lib` (frozen in 2023 on
+`gymnasium==0.26.3`) and `torchrl` world models (designed for TensorDict latent spaces).
+
+Datasets (`.npz`) hold fixed-length episodes that are not cut at success, half
+Ornstein-Uhlenbeck noise, half noisy PD controller towards the goal.
+
+## Validation
+
+`uv run pytest --cov` (100 % line and branch coverage, published to Codecov by CI): Gymnasium API,
+determinism, exact oracle, physics against the analytical rolling model (terminal velocity F/c,
+time constant 1.4 m/c, error < 2 %), timestep convergence, penetration and speed bounds on
+impacts, negative controls, classic and Filament rendering (skipped without an X display), MP4
+export, MLP world model (skipped without PyTorch), tools and error paths.
+
+## Extra tools
+
+### Course data collection
+
+`modular_sphere.tools.collect_courses` collects data for the 5 course levels:
+
+```bash
+# All levels
+uv run python -m modular_sphere.tools.collect_courses --all-levels --episodes 100 --out-dir data/courses
+
+# One level
+uv run python -m modular_sphere.tools.collect_courses --level 3 --episodes 200 --out-dir data/courses
+```
+
+Options: `--level 1-5` or `--all-levels`, `--episodes N` (default 50), `--steps N` (default: the
+level's `max_steps`), `--seed S` (level L: `S + 1000·L`), `--goal-seeking-ratio R` (default 0.5).
+Output: `<out-dir>/course_l<L>.npz`.
+
+### GUI evaluation
+
+`modular_sphere.tools.eval_gui` evaluates world models visually in the MuJoCo viewer:
+
+```bash
+# Basic reach environment
+uv run python -m modular_sphere.tools.eval_gui
+
+# Course level 1-5
+uv run python -m modular_sphere.tools.eval_gui --level 1
+
+# With a trained model
+uv run python -m modular_sphere.tools.eval_gui --model models/mlp_world_model.pt
+
+# Record a video
+uv run python -m modular_sphere.tools.eval_gui --record demo.mp4
+
+# Policies (default: waypoint on courses, pd on reach)
+uv run python -m modular_sphere.tools.eval_gui --policy pd          # PD controller towards the goal
+uv run python -m modular_sphere.tools.eval_gui --policy random      # random actions
+uv run python -m modular_sphere.tools.eval_gui --level 2 --policy waypoint  # scripted pilot
+```
+
+Options: `--level 0-5` (0 = reach), `--model PATH`, `--policy pd|random|waypoint`, `--steps N`
+(default 600), `--horizon H` (default 20 steps, ghost re-anchoring), `--seed S`, `--record PATH`.
+
+The translucent blue ghost shows the model's open-loop prediction from the last real state; the
+position error is printed at each re-anchoring. Get a `.pt` model with
+`MLPWorldModel().fit(TrajectoryDataset.load("data/courses/course_l1.npz"))` then `.save(path)`.
+
+## Migration from the PyBullet version (0.0.2)
+
+PyBullet/qibullet, the `stable_baselines` PPO2 agent (TensorFlow 1) and its pretrained model are
+removed. Contract changes: fixed deterministic timestep instead of a real-time thread, reward
+independent of the wall clock, 11-D Markov observation instead of 6-D positions, non-physical
+goal, walls instead of a failure beyond 2 m, realistic inertia instead of `I = 1 kg·m²`.
+
+## License
+
+See `LICENSE`.
