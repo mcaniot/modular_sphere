@@ -1,0 +1,36 @@
+name: Release
+
+# Push an annotated SemVer tag (vX.Y.Z) matching pyproject.toml to build and publish a GitHub
+# release with the sdist, the wheel and the CHANGELOG section as notes.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Check tag matches the package version
+        run: test "${GITHUB_REF_NAME#v}" = "$(uv version --short)"
+      - run: uv build
+      - name: Extract release notes from CHANGELOG.md
+        run: >-
+          awk -v v="${GITHUB_REF_NAME#v}"
+          '/^## \[/{p = index($0, "[" v "]") > 0; next} p' CHANGELOG.md > notes.md
+      - name: Create or update the GitHub release (re-runnable)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+            gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md \
+              --draft=false --verify-tag
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --title "$GITHUB_REF_NAME" \
+              --notes-file notes.md --verify-tag
+          fi
