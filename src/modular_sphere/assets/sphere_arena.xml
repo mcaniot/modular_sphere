@@ -1,0 +1,80 @@
+<!--
+  Modular sphere robot rolling in a walled arena.
+
+  Contract (see README "Contrat simulation"):
+    - physics timestep 2 ms, the Gymnasium env applies frame_skip=25 (control at 20 Hz);
+    - actuators push the sphere centre of mass along world x / y, ctrl in [-1, 1] -> force in N (gear 1);
+    - sphere: radius 0.10 m, mass 0.300 kg, solid inertia derived from the geom;
+    - linear viscous damping 0.69 N.s/m on x/y (equivalent of the legacy PyBullet linearDamping=0.9).
+-->
+<mujoco model="modular_sphere_arena">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.002" integrator="implicitfast"/>
+
+  <!-- Visual-only settings: they do not change the dynamics. -->
+  <visual>
+    <global offwidth="1280" offheight="1280" azimuth="135" elevation="-30"/>
+    <quality shadowsize="8192" offsamples="8"/>
+    <headlight ambient="0.3 0.3 0.3" diffuse="0.3 0.3 0.3" specular="0 0 0"/>
+    <map haze="0.2"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.35 0.55 0.75" rgb2="0.02 0.03 0.05" width="512" height="3072"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.12 0.2 0.28" rgb2="0.2 0.3 0.4" width="512" height="512"
+             mark="edge" markrgb="0.35 0.45 0.55"/>
+    <material name="grid" texture="grid" texrepeat="8 8" reflectance="0.15" roughness="0.6"/>
+    <!-- Two-tone shell so that rolling (angular velocity) is visible in images. -->
+    <texture name="shell" type="cube" builtin="checker" rgb1="0.92 0.92 0.9" rgb2="0.95 0.45 0.1" width="256" height="256"/>
+    <!-- No metallic/roughness here: MuJoCo 4.0.1 Filament aborts on a cube texture with PBR attributes. -->
+    <material name="sphere" texture="shell" specular="0.6" shininess="0.6"/>
+    <material name="goal" rgba="0.9 0.1 0.1 0.75" emission="0.4" roughness="0.3"/>
+    <material name="wall" rgba="0.45 0.5 0.58 1" roughness="0.8"/>
+  </asset>
+
+  <default>
+    <default class="wall">
+      <geom type="box" material="wall" size="2.1 0.05 0.1"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <light name="sun" pos="1.5 -1.5 5" dir="-0.3 0.3 -1" directional="true" diffuse="0.7 0.7 0.7"
+           specular="0.3 0.3 0.3" castshadow="true"/>
+    <light name="fill" pos="-2 2 3" dir="0.5 -0.5 -1" diffuse="0.25 0.25 0.3" castshadow="false"/>
+    <camera name="top" pos="0 0 5.5" xyaxes="1 0 0 0 1 0"/>
+    <camera name="overview" pos="0 -4.2 3.4" xyaxes="1 0 0 0 0.63 0.78"/>
+    <geom name="floor" type="plane" size="2.1 2.1 0.1" material="grid"/>
+    <geom name="wall_north" class="wall" pos="0 2.05 0.1"/>
+    <geom name="wall_south" class="wall" pos="0 -2.05 0.1"/>
+    <geom name="wall_east" class="wall" pos="2.05 0 0.1" euler="0 0 1.5708"/>
+    <geom name="wall_west" class="wall" pos="-2.05 0 0.1" euler="0 0 1.5708"/>
+
+    <body name="sphere" pos="0 0 0.1">
+      <camera name="track" mode="trackcom" pos="0 -1.2 1.2" xyaxes="1 0 0 0 0.707 0.707"/>
+      <joint name="slide_x" type="slide" axis="1 0 0" damping="0.69"/>
+      <joint name="slide_y" type="slide" axis="0 1 0" damping="0.69"/>
+      <joint name="slide_z" type="slide" axis="0 0 1"/>
+      <joint name="roll" type="ball"/>
+      <geom name="sphere" type="sphere" size="0.1" mass="0.3" material="sphere"
+            condim="6" friction="1 0.005 0.0001"/>
+    </body>
+
+    <body name="goal" mocap="true" pos="1 1 0.1">
+      <geom name="goal" type="sphere" size="0.1" material="goal" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+
+  <!-- Filament renderer lighting (classic-authored lights, fallback mode), tuned by eye. -->
+  <custom>
+    <numeric name="filament.fallback.scene_light_intensity" data="200000"/>
+    <numeric name="filament.fallback.environment_light_intensity" data="15000"/>
+    <numeric name="filament.fallback.head_light_intensity" data="60000"/>
+  </custom>
+
+  <actuator>
+    <motor name="force_x" joint="slide_x" ctrlrange="-1 1" gear="1"/>
+    <motor name="force_y" joint="slide_y" ctrlrange="-1 1" gear="1"/>
+  </actuator>
+</mujoco>
