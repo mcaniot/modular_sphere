@@ -30,8 +30,12 @@ from the world-action ingredients: without history, chunking and frame predictio
 transformer still solves 50/50 (three training seeds), and a cloned MLP widened from 128 to 512
 units solves 49–50/50, whereas the 128-unit MLP stays at 24–26/50. Group-relative self-imitation in MuJoCo shortens pull
 by 9 % but collapses climb when rollouts are executed with temporal ensembling, whose lag the
-model learns back. The end goal is a planner that composes the skills in parallel over sphere subsets with learned skill
-effect models, which to our knowledge has not been published in this form.
+model learns back. A scheduler that composes the skills in parallel lanes over sphere subsets,
+choosing roles and lanes by the makespan predicted with the steps-to-go effect models, solves the
+four-sphere task on 50/50 test seeds in 150 steps against 248 for the expert (all 50 seeds faster,
+sign test p = 1.8e-15) when the skills are executed by their scripted controllers. With learned
+executors it is as fast but fails more (cloned MLP 30/50, WAM 38/50): the learned climb fails on
+about a quarter of the hand-offs from a roll, a state its training starts never covered.
 
 ## 1. Introduction
 
@@ -377,6 +381,49 @@ smoothed copy of the model's own predictions; ensembling them again at the next 
 and the lift phase of climb is timing-critical. Without ensembling, noise-free self-imitation is
 stable (50/50).
 
+### 5.7 Parallel skill scheduling with effect models (S4)
+
+Method (`swarm_plan.py`). A plan splits the N spheres into lanes, each with a line `y`, a base and
+its climbers. In a lane, the base and the climbers first roll to fixed spots inside the climb
+initiation set (base 0.11 m before its climbing position, climbers queued 0.45 m and more behind),
+the climbers climb over the base one at a time, the last one pulls the base up, and every sphere on
+the platform rolls to a gathering slot. Lanes run in parallel. The plan is the minimum of a
+predicted makespan over every partition of the spheres into lanes of two or more, every base
+choice and two or three lane spacings (±0.3 or ±0.45 m around the goal line for two lanes); the
+lane's makespan sums the durations predicted by the steps-to-go models of Section 5.4 at each
+skill's nominal start (Liang et al. [15]: skill effect models composed by a search). The climb
+order is replanned from the true state at each climb start (smallest predicted climb first).
+Skills end on their termination events and restart after 200 steps. The executor of each skill
+call is the scripted controller, the 512-unit cloned MLP (Section 5.5) or the WAM.
+
+Results (four spheres, test seeds 200000–200049, the same for every controller; McNemar on
+success, sign test on steps over the seeds both solve; "moving" is the mean fraction of spheres
+faster than 5 cm/s):
+
+| Controller | Success | Steps | Moving | vs expert | vs DAgger |
+|---|---|---|---|---|---|
+| Expert (`SwarmClimbPolicy`) | 50/50 [0.93, 1.00] | 248.2 | 0.44 | | 3–0, p = 0.25; faster on 40/47 |
+| DAgger (Section 5.2) | 47/50 [0.83, 0.99] | 253.9 | 0.45 | 0–3, p = 0.25 | |
+| **Scheduler, scripted skills** | **50/50** [0.93, 1.00] | **149.9** | 0.79 | 0–0; faster on 50/50, p = 1.8e-15, ×0.61 | 3–0, p = 0.25; faster on 47/47, ×0.59 |
+| Scheduler forced to one lane, scripted | 47/50 [0.83, 0.99] | 250.2 | 0.51 | 0–3, p = 0.25; 24 faster, 23 slower | 3–3; ×0.99 |
+| Scheduler, cloned MLP 512 | 30/50 [0.45, 0.74] | 131.0 | 0.67 | 0–20, p = 1.9e-6; faster on 30/30, ×0.53 | 2–19, p = 2.2e-4 |
+| Scheduler, WAM | 38/50 [0.62, 0.87] | 125.4 | 0.73 | 0–12, p = 4.9e-4; faster on 38/38, ×0.51 | 3–12, p = 0.035 |
+
+The effect models choose two lanes on every seed, and that choice is the whole gain: forced to one
+lane, the same scheduler and skills take as long as the expert. With scripted skills the predicted
+makespan is 4 steps shorter than the real one on average (absolute error 5 steps; 9.8 steps for one
+lane), so the steps-to-go models are accurate enough to rank plans. The scheduler roughly doubles
+the fraction of spheres moving (0.79 against 0.44). With learned executors the successful
+episodes are even faster than with the scripts (125–131 steps), but the success rate drops. Every
+WAM failure is a climb that stalls (24 restarts, all climb; the cloned MLP also stalls on rolls).
+The cause is the hand-off: from the nominal start at rest, all three executors climb 30/30 in both
+the two- and four-sphere environments, but after a learned roll brings the two spheres to the same
+spots (residual speed below 5 cm/s), the WAM climbs 30/40 and the cloned MLP 31/40, also after 20
+idle steps (30/40 and 36/40). The climb data start at rest at sampled positions, so the end
+states of the roll skill are outside the learned climb's training distribution: the skill-chaining
+problem [24, 25] that the scripted controllers,
+being closed-loop on the true state, do not have.
+
 ## 6. Negative results and fixed defects
 
 | Attempt | Outcome | Diagnosis |
@@ -436,6 +483,7 @@ author's machine and still need to be parametrised):
 | 5.4 MPPI | `skills_s3.py`, `skills_prior.py` | episodes 0–9, start sampler seed 123 |
 | 5.5 WAM | `skills_wam.py`, `skills_wam_stats.py` | same starts (10 or 50 episodes) |
 | 5.5 ablations | `skills_wam_ablate.py`, `skills_wam_ablate_stats.py` | same starts (50); training seeds 0–2 |
+| 5.7 scheduler | `skills_s4.py`, `skills_s4_stats.py` | test seeds 200000–200049 |
 | 5.6 self-imitation | `skills_selfimit.py` | rollouts 100000·round (+start); eval as 5.5 |
 
 Whole-task pipeline: `uv run python -m modular_sphere.tools.train_swarm` (see `--help`).
@@ -445,10 +493,10 @@ Whole-task pipeline: `uv run python -m modular_sphere.tools.train_swarm` (see `-
 1. Replace the 128-unit cloned policy by the 512-unit one as the BC baseline and MPPI proposal;
    rerun the MPPI and self-imitation comparisons against it; self-imitation for roll.
 2. MPPI baseline: oracle-model ablation on climb; 50 episodes per skill.
-3. S4: skill effect models (start → duration, success) as in [15]; a planner that assigns roles
-   and schedules skills in parallel over sphere subsets (for example two climbs at once), replanning
-   at skill ends; compare with the expert and DAgger on test seeds (McNemar on success, sign test on
-   steps, fraction of spheres moving).
+3. S4 with learned skills: collect climb and pull data from the end states of the preceding skill
+   (roll then climb, climb then pull) with DART noise, retrain the cloned MLP and the WAM, and rerun
+   the scheduler on the test seeds; then N = 6 (three lanes) and a success term in the effect
+   models.
 
 ## References
 
@@ -499,3 +547,6 @@ Whole-task pipeline: `uv run python -m modular_sphere.tools.train_swarm` (see `-
     Low-Cost Hardware*. RSS 2023. arXiv:2304.13705.
 23. Z. Shao et al. *DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language
     Models*. 2024. arXiv:2402.03300.
+24. G. Konidaris, A. Barto. *Skill Discovery in Continuous Reinforcement Learning Domains using
+    Skill Chaining*. NeurIPS 2009.
+25. A. Bagaria, G. Konidaris. *Option Discovery using Deep Skill Chaining*. ICLR 2020.

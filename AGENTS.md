@@ -13,6 +13,8 @@ for what an agent needs and cannot guess.
   `SwarmClimbPolicy`.
 - `src/modular_sphere/swarm_data.py`: `SwarmDataset`, `collect` (expert + DART noise, DAgger);
   `swarm_torch.py`: `SwarmWorldModel`, `SwarmPolicy`, `improve_with_ppo`, evaluations.
+- `src/modular_sphere/swarm_skills.py` (skills roll, climb, pull: controllers, priors, values),
+  `swarm_wam.py` (per-skill world-action model), `swarm_plan.py` (parallel skill scheduler).
 - `src/modular_sphere/assets/sphere_arena.xml`: the only MJCF; courses and swarm edit it with `mujoco.MjSpec`.
 - `src/modular_sphere/world_model.py`: `WorldModel` protocol, baselines, `evaluate`.
 - `src/modular_sphere/torch_world_model.py`: optional PyTorch `MLPWorldModel` (extra `torch`).
