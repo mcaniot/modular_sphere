@@ -585,6 +585,10 @@ from one state; an executor that infers it from its history (Section 9) is the n
   randomised chain data); the effect models were not retrained on courses or randomised dynamics.
 - The robust executors were selected on the held-out courses 400000..; only the fresh courses
   500000–500049 (Section 5.9) are an unbiased test of that choice. One training seed per variant.
+- The mass conditions of Section 5.9 scaled masses and inertias without recomputing MuJoCo's
+  mass-derived constraint weights (`mj_setConst`), so they also changed contact and link softness
+  slightly; the randomised chain data used the same scaling. `perturb_dynamics` now recomputes
+  them; the mass results have not been rerun.
 - Several MPPI and RL results use 10–20 episodes; their intervals are wide (Section 5).
 - The model-comparison table measures the whole-task model out of its training distribution.
 - The skill cost functions are hand-written; their shaping may decide climb/pull success more than

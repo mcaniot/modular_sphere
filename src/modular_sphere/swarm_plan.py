@@ -24,6 +24,7 @@ import itertools
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
 
+import mujoco
 import numpy as np
 import torch
 from numpy.typing import NDArray
@@ -37,7 +38,7 @@ from modular_sphere.swarm import (
     SwarmClimbPolicy,
     obs_slices,
 )
-from modular_sphere.swarm_data import SwarmDataset
+from modular_sphere.swarm_data import SwarmDataset, empty_arrays
 from modular_sphere.swarm_rl import MOVING_SPEED
 from modular_sphere.swarm_skills import (
     MAX_SKILL_STEPS,
@@ -359,7 +360,8 @@ class SkillScheduler:
         lv, low = self.levels[self.level], self.top.floor + self.r - 0.05
         for i, h in list(self.rescues.items()):
             if h >= 0 and spheres[h, 2] < low:  # the helper fell: both wait for a rescue
-                self.runs.pop(i, None), self.runs.pop(h, None)
+                self.runs.pop(i, None)
+                self.runs.pop(h, None)
                 self.rescues[i] = self.rescues[h] = -1
             elif h >= 0 and i not in self.runs:
                 del self.rescues[i]
@@ -390,9 +392,8 @@ class SkillScheduler:
 
     def _advance(self, k: int, spheres: Array) -> None:
         lane, busy, lv = self.lanes[k], self.runs, self.levels[self.level]
-        if self.stage[k] == "approach":
-            if lane.base not in busy and lane.climbers[0] not in busy:
-                self.stage[k] = "climb"
+        if self.stage[k] == "approach" and lane.base not in busy and lane.climbers[0] not in busy:
+            self.stage[k] = "climb"
         if self.stage[k] == "climb":
             c = self.cur[k]
             if c is not None and c not in busy:  # the climb ended
@@ -462,14 +463,16 @@ class ScheduleEval:
 
 
 def perturb_dynamics(env: SphereSwarmStepEnv, seed: int) -> None:
-    """Domain randomisation (Peng et al., 2018): scales the sphere masses and inertias and every
-    sliding friction of ``env`` by factors drawn uniformly in ``DYNAMICS_*`` from ``seed``."""
+    """Domain randomisation (Peng et al., 2018): scales the body masses and inertias and every
+    sliding friction of ``env`` by factors drawn uniformly in ``DYNAMICS_*`` from ``seed``, then
+    recomputes the mass-derived constants (constraint and contact weights)."""
     rng = np.random.default_rng(seed)
     body = env.model.body_mass > 0
     mass = rng.uniform(*DYNAMICS_MASS)
     env.model.body_mass[body] *= mass
     env.model.body_inertia[body] *= mass
     env.model.geom_friction[:, 0] *= rng.uniform(*DYNAMICS_FRICTION)
+    mujoco.mj_setConst(env.model, env.data)
 
 
 def evaluate_schedule(scheduler: SkillScheduler, seeds: list[int],
@@ -513,17 +516,8 @@ def segments_to_data(segments: list[Segment], name: str) -> tuple[SwarmDataset, 
     ``SkillWAM.fit`` and ``SkillValue.fit``."""
     segs = [s for s in segments if s.call.name == name]
     e, h = len(segs), MAX_SKILL_STEPS
-    out = {
-        "spheres": np.zeros((e, h + 1, 2, 9)),
-        "links": np.zeros((e, h + 1, 2, 2), dtype=bool),
-        "obs": np.zeros((e, h + 1, 2, obs_slices(2)["others"].stop)),
-        "actions": np.zeros((e, h, 2, ACT_DIM)),
-        "expert": np.zeros((e, h, 2, ACT_DIM)),
-        "rewards": np.zeros((e, h)),
-        "valid": np.zeros((e, h), dtype=bool),
-        "goal": np.zeros((e, 3)),
-        "success": np.array([s.success for s in segs], dtype=bool),
-    }
+    out = empty_arrays(e, h, 2, obs_slices(2)["others"].stop)
+    out["success"] = np.array([s.success for s in segs], dtype=bool)
     calls = []
     for i, s in enumerate(segs):
         t, k = len(s.labels), s.spheres.shape[1]

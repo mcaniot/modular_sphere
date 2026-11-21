@@ -137,7 +137,14 @@ def test_scripted_swarm_climbs_the_step(n, seed):
 
 
 def test_courses_are_validated_and_random_courses_stay_in_bounds():
-    for faces, rises in (((), ()), ((0.5,), (0.1, 0.1)), ((0.5, 0.2), (0.1, 0.1)), ((0.5,), (0,))):
+    for faces, rises in (
+        ((), ()),
+        ((0.5,), (0.1, 0.1)),
+        ((0.5, 0.2), (0.1, 0.1)),
+        ((0.5,), (0,)),
+        ((-0.7,), (0.1,)),
+        ((1.2,), (0.1,)),
+    ):
         with pytest.raises(ValueError, match="course"):
             Course(faces, rises)
     c = Course((-0.3, 0.5), (0.12, 0.14))
@@ -207,5 +214,21 @@ def test_truncation_render_and_errors():
     assert SphereSwarmStepEnv(n_spheres=2).render() is None
     with pytest.raises(ValueError, match="n_spheres"):
         SphereSwarmStepEnv(n_spheres=1)
+    with pytest.raises(RuntimeError, match="no room"):  # start zone too small: no hang
+        SphereSwarmStepEnv(n_spheres=30).reset(seed=0)
     with pytest.raises(ValueError, match="render_mode"):
         SphereSwarmStepEnv(render_mode="human")
+
+
+@pytest.mark.parametrize("height", [0.0, WALL_H])
+def test_step_height_is_validated(height):
+    with pytest.raises(ValueError, match="step_height"):
+        SphereSwarmStepEnv(n_spheres=2, step_height=height)
+
+
+def test_lower_step_moves_the_goal_down():
+    low, high = SphereSwarmStepEnv(n_spheres=2, step_height=0.05), SphereSwarmStepEnv(n_spheres=2)
+    low.reset(seed=0)
+    high.reset(seed=0)
+    assert low.step_height == 0.05 and high.step_height == STEP_H
+    assert high.goal[2] - low.goal[2] == pytest.approx(STEP_H - 0.05)

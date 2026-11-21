@@ -21,12 +21,13 @@ from numpy.typing import NDArray
 from torch import nn
 
 from modular_sphere.swarm import ACT_DIM, SphereSwarmStepEnv
-from modular_sphere.swarm_data import SwarmDataset
+from modular_sphere.swarm_data import SwarmDataset, empty_arrays
 from modular_sphere.swarm_skills import (
     MAX_SKILL_STEPS,
     STD_FLOOR,
     SkillCall,
     SkillController,
+    feature_dim,
     place,
     sample_start,
     skill_features,
@@ -51,8 +52,7 @@ class SkillWAM(nn.Module):
         self.cfg = {"n_agents": n_agents, "history": history, "chunk": chunk, "width": width,
                     "layers": layers, "heads": heads}  # fmt: skip
         self.n_agents, self.history, self.chunk = n_agents, history, chunk
-        dim = 9 * n_agents + (n_agents == 2)
-        self.dim = dim
+        self.dim = dim = feature_dim(n_agents)
         self.inp = nn.Linear(dim, width)
         self.pos = nn.Parameter(torch.zeros(history + 2 * chunk, width))
         self.kind = nn.Parameter(torch.zeros(3, width))  # history, future frame, action
@@ -214,17 +214,7 @@ def rollout_skill(wam: SkillWAM, name: str, n_starts: int, group: int = 8, noise
     env = SphereSwarmStepEnv(n_spheres=2, max_steps=MAX_SKILL_STEPS + 1)
     ag = (0,) if name == "roll" else (0, 1)
     rng, n_eps, horizon = np.random.default_rng(seed), n_starts * group, MAX_SKILL_STEPS
-    out = {
-        "spheres": np.zeros((n_eps, horizon + 1, 2, 9)),
-        "links": np.zeros((n_eps, horizon + 1, 2, 2), dtype=bool),
-        "obs": np.zeros((n_eps, horizon + 1, 2, env.slices["others"].stop)),
-        "actions": np.zeros((n_eps, horizon, 2, ACT_DIM)),
-        "expert": np.zeros((n_eps, horizon, 2, ACT_DIM)),
-        "rewards": np.zeros((n_eps, horizon)),
-        "valid": np.zeros((n_eps, horizon), dtype=bool),
-        "goal": np.zeros((n_eps, 3)),
-        "success": np.zeros(n_eps, dtype=bool),
-    }
+    out = empty_arrays(n_eps, horizon, 2, env.slices["others"].stop)
     calls, steps = [], np.zeros(n_eps, dtype=np.int64)
     for s in range(n_starts):
         start, target = sample_start(name, rng, env.radius)
@@ -234,13 +224,10 @@ def rollout_skill(wam: SkillWAM, name: str, n_starts: int, group: int = 8, noise
             env.reset(seed=seed + s)
             place(env, start)
             env.data.mocap_pos[env._goal_mocap][:2] = (10.0, 10.0)
-            judge, ctrl = (
-                SkillController(call, 2, env.radius),
-                WAMController(wam, call, 2, ensemble),
-            )
+            judge = SkillController(call, 2, env.radius)
+            ctrl = WAMController(wam, call, 2, ensemble)
             out["spheres"][e] = np.concatenate(env._kinematics(), 1)
             out["links"][e] = env.links
-            t = 0
             for t in range(horizon):
                 act = ctrl.act(out["spheres"][e, t], env.links)
                 act[list(ag), :3] += noise * rng.standard_normal((len(ag), 3))

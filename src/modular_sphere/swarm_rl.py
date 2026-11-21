@@ -33,7 +33,7 @@ from numpy.typing import NDArray
 from torch import nn
 
 from modular_sphere.swarm import SphereSwarmStepEnv, obs_slices
-from modular_sphere.swarm_torch import SwarmPolicy, _mlp
+from modular_sphere.swarm_torch import SwarmPolicy, _mlp, _ppo_dist
 
 Array = NDArray[np.float64]
 MOVING_SPEED = 0.05  # a sphere moves when its horizontal speed exceeds this [m/s]
@@ -230,11 +230,6 @@ def train_mappo(
         # of the first reset would divide velocities (all zero then) by a tiny std.
         return critic(s).squeeze(-1)
 
-    def dist(o: torch.Tensor) -> tuple[torch.distributions.Distribution, ...]:
-        out = policy.net(o, policy.stats)
-        normal = torch.distributions.Normal(out[..., :3], std.exp().expand_as(out[..., :3]))
-        return normal, torch.distributions.Bernoulli(logits=out[..., 3])
-
     t = policy._t
     log: list[dict[str, float]] = []
     ep_len = np.zeros(vec.num_envs)
@@ -244,7 +239,7 @@ def train_mappo(
         with torch.no_grad():
             for _ in range(horizon):
                 o = t(obs)
-                normal, bern = dist(o)
+                normal, bern = _ppo_dist(policy, o, std)
                 cont, att = normal.sample(), bern.sample()
                 logp = normal.log_prob(cont).sum(-1) + bern.log_prob(att)
                 act = torch.cat([cont, att[..., None] * 2 - 1], -1).cpu().numpy()
@@ -289,7 +284,7 @@ def train_mappo(
                 count += 1
                 if it < critic_warmup:
                     continue
-                normal, bern = dist(o_all[idx])
+                normal, bern = _ppo_dist(policy, o_all[idx], std)
                 a = a_all[idx]
                 logp = normal.log_prob(a[..., :3]).sum(-1) + bern.log_prob(a[..., 3])
                 ratio = (logp - lp_all[idx]).exp()  # per agent, (B, N)

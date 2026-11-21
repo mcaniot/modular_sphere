@@ -68,6 +68,22 @@ class SwarmDataset:
         )
 
 
+def empty_arrays(n_episodes: int, horizon: int, n_spheres: int, obs_dim: int) -> dict[str, Array]:
+    """Zero-filled ``SwarmDataset`` fields, to fill episode by episode."""
+    e, h, n = n_episodes, horizon, n_spheres
+    return {
+        "spheres": np.zeros((e, h + 1, n, 9)),
+        "links": np.zeros((e, h + 1, n, n), dtype=bool),
+        "obs": np.zeros((e, h + 1, n, obs_dim)),
+        "actions": np.zeros((e, h, n, ACT_DIM)),
+        "expert": np.zeros((e, h, n, ACT_DIM)),
+        "rewards": np.zeros((e, h)),
+        "valid": np.zeros((e, h), dtype=bool),
+        "goal": np.zeros((e, 3)),
+        "success": np.zeros(e, dtype=bool),
+    }
+
+
 def _stack(obs: ObsDict, agents: list[str]) -> Array:
     return np.stack([obs[a] for a in agents])
 
@@ -90,17 +106,7 @@ def collect(
     expert = SwarmClimbPolicy(n_spheres, env.radius)
     agents, horizon = env.possible_agents, env.max_steps
     rng = np.random.default_rng(seed)
-    out = {
-        "spheres": np.zeros((n_episodes, horizon + 1, n_spheres, 9)),
-        "links": np.zeros((n_episodes, horizon + 1, n_spheres, n_spheres), dtype=bool),
-        "obs": np.zeros((n_episodes, horizon + 1, n_spheres, env.slices["others"].stop)),
-        "actions": np.zeros((n_episodes, horizon, n_spheres, ACT_DIM)),
-        "expert": np.zeros((n_episodes, horizon, n_spheres, ACT_DIM)),
-        "rewards": np.zeros((n_episodes, horizon)),
-        "valid": np.zeros((n_episodes, horizon), dtype=bool),
-        "goal": np.zeros((n_episodes, 3)),
-        "success": np.zeros(n_episodes, dtype=bool),
-    }
+    out = empty_arrays(n_episodes, horizon, n_spheres, env.slices["others"].stop)
 
     def record(e: int, t: int, obs: ObsDict) -> None:
         out["spheres"][e, t:] = np.concatenate(env._kinematics(), axis=1)

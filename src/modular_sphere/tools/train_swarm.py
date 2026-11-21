@@ -150,6 +150,7 @@ def train_swarm(
     best = _summary(evaluate_policy(policy, n_spheres, select), select_ref)["speed_vs_expert"]
     policy.save(str(out_dir / "ppo.pt"))
     ppo_log: list[dict[str, float]] = []
+    anchor = SwarmPolicy.load(str(out_dir / "ppo.pt"), device)  # the KL stays to this policy
     for chunk in range(0, ppo_iterations, ppo_chunk):
         log = improve_with_ppo(
             policy,
@@ -160,6 +161,7 @@ def train_swarm(
             time_penalty=time_penalty,
             uncertainty_weight=uncertainty_weight,
             seed=chunk,
+            anchor=anchor,
         )
         speed = _summary(evaluate_policy(policy, n_spheres, select), select_ref)["speed_vs_expert"]
         ppo_log.append({**log[-1], "iteration": chunk + len(log), "select_speed": speed})

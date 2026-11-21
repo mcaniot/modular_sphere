@@ -63,6 +63,7 @@ COURSE_RISES = (0.12, 0.15)  # ... rise of each step: above radius, the pull fai
 COURSE_DEPTHS = (0.65, 0.85)  # ... platform depth between two faces [m] ...
 COURSE_FIRST_X = (-0.4, 0.5)  # ... first face [m] ...
 COURSE_LAST_X = 1.0  # ... and last face, leaving room for the gathering zone [m]
+QUEUE_ROOM = 0.9  # start centres stay this far behind the first face, room for the queues [m]
 _LINK_RGBA = (0.1, 0.9, 0.9, 1.0)
 _HIDDEN_GROUP = 5
 
@@ -85,6 +86,11 @@ class Course:
             raise ValueError(f"course needs as many faces as rises, got {self}")
         if np.any(np.diff(self.faces) <= 0) or min(self.rises) <= 0:
             raise ValueError(f"course faces must increase and rises be positive, got {self}")
+        first_min = round(START_ZONE[0] + QUEUE_ROOM, 6)
+        if not first_min < self.faces[0] <= self.faces[-1] <= COURSE_LAST_X:
+            raise ValueError(
+                f"course faces must lie in ({first_min}, {COURSE_LAST_X}] m, got {self}"
+            )
 
     def floor(self, k: int) -> float:
         """Floor height in front of step ``k`` (``k = len(faces)``: the top platform) [m]."""
@@ -361,8 +367,11 @@ class SphereSwarmStepEnv(ParallelEnv):
             linked[i, j] = linked[j, i] = bool(self.data.eq_active[k])
         return linked
 
+    def _positions(self) -> NDArray[np.float64]:
+        return np.stack([self.data.qpos[a : a + 3] for a in self._qpos])
+
     def _kinematics(self) -> tuple[NDArray[np.float64], ...]:
-        pos = np.stack([self.data.qpos[a : a + 3] for a in self._qpos])
+        pos = self._positions()
         vel = np.stack([self.data.qvel[a : a + 3] for a in self._qvel])
         ang_vel = np.zeros((self.n, 3))  # ball-joint velocity is in the body frame
         for i, (qa, va) in enumerate(zip(self._qpos, self._qvel, strict=True)):
@@ -386,26 +395,28 @@ class SphereSwarmStepEnv(ParallelEnv):
     @property
     def arrived(self) -> NDArray[np.bool_]:
         """Spheres on the platform (centre above the step) inside the gathering zone."""
-        pos, goal = self._kinematics()[0], self.goal
+        pos, goal = self._positions(), self.goal
         in_zone = np.linalg.norm(pos[:, :2] - goal[:2], axis=1) <= self.gather_radius
         return in_zone & (pos[:, 2] > self.step_height + self.radius / 2)
 
     def _dist(self) -> float:
-        pos = np.stack([self.data.qpos[a : a + 3] for a in self._qpos])
+        pos = self._positions()
         return float(np.linalg.norm(pos - self.goal, axis=1).mean())
 
     def _sample_starts(self) -> list[NDArray[np.float64]]:
         x0, x1, y0, y1 = START_ZONE
-        x1 = min(x1, self.course.faces[0] - 0.9)  # room for the queues in front of the first face
+        x1 = min(x1, self.course.faces[0] - QUEUE_ROOM)
         starts: list[NDArray[np.float64]] = []
-        while len(starts) < self.n:  # rejection sampling, the zone holds far more than N spheres
+        for _ in range(1000 * self.n):  # rejection sampling, bounded: a full zone must not hang
             xy = np.array([self.np_random.uniform(x0, x1), self.np_random.uniform(y0, y1)])
             if all(np.linalg.norm(xy - s) >= 2 * self.radius + MIN_START_GAP for s in starts):
                 starts.append(xy)
-        return starts
+                if len(starts) == self.n:
+                    return starts
+        raise RuntimeError(f"no room for {self.n} start centres in x [{x0}, {x1}] m")
 
     def _update_links(self, request: NDArray[np.bool_]) -> None:
-        pos = np.stack([self.data.qpos[a : a + 3] for a in self._qpos])
+        pos = self._positions()
         for k, (i, j) in enumerate(self._pairs):
             want = bool(request[i] and request[j])
             if self.data.eq_active[k] and not want:
@@ -480,10 +491,10 @@ class SwarmClimbPolicy:
         while len(cells) < self.n:
             for side in range(6):
                 a0, a1 = np.deg2rad(60 * side), np.deg2rad(60 * (side + 1))
+                corner0 = ring * np.array([np.cos(a0), np.sin(a0)])
+                corner1 = ring * np.array([np.cos(a1), np.sin(a1)])
                 for s in range(ring):
                     t = s / ring
-                    corner0 = ring * np.array([np.cos(a0), np.sin(a0)])
-                    corner1 = ring * np.array([np.cos(a1), np.sin(a1)])
                     cells.append(tuple((1 - t) * corner0 + t * corner1))
             ring += 1
         slots = [goal[:2] + self.SLOT_PITCH * np.asarray(c) for c in cells[: self.n]]
@@ -562,8 +573,8 @@ class SwarmClimbPolicy:
                 self._lifting = bool(ready and speed < 0.1)
             if self._lifting and not self._linked(oh, agents.index(helper), agents.index(base)):
                 act[helper][:2] = self._track(oh, edge_xy, vmax=0.3)  # hold the edge, link first
-                act[base][:] = (1.0, 0.0, 0.0, 0.0)
-                act[helper][3] = act[base][3] = 1.0
+                act[base][:] = (1.0, 0.0, 0.0, 1.0)
+                act[helper][3] = 1.0
             elif self._lifting:
                 act[helper][:] = (1.0, 0.0, 0.0, 1.0)
                 act[base][:] = self._lift(oh, ob)

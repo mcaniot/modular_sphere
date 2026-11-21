@@ -107,7 +107,7 @@ def test_prior_value_and_planner(climb, tmp_path):
     wm.fit(climb.data)
     spheres = climb.data.spheres[0, 0]
     links = climb.data.links[0, 0]
-    for kw in ({}, {"prior": prior, "value": value}):
+    for kw in ({}, {"prior": prior, "value": value}, {"prior": prior, "prior_frac": 1.0}):
         planner = SkillPlanner(wm, calls[0], 2, horizon=3, samples=8, iterations=1, **kw)
         a = planner.act(spheres, links)
         assert a.shape == (2, 4) and np.isin(a[:, 3], (-1.0, 1.0)).all()

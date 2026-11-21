@@ -32,7 +32,7 @@ from modular_sphere.swarm import (
     SphereSwarmStepEnv,
     SwarmClimbPolicy,
 )
-from modular_sphere.swarm_data import SwarmDataset
+from modular_sphere.swarm_data import SwarmDataset, empty_arrays
 from modular_sphere.swarm_torch import SwarmWorldModel
 
 Array = NDArray[np.float64]
@@ -80,7 +80,6 @@ class SkillController:
     def __init__(self, call: SkillCall, n_spheres: int, radius: float = 0.1) -> None:
         self.call, self.r = call, radius
         self.ex = SwarmClimbPolicy(n_spheres, radius)
-        self.sl = self.ex.slices
         self.lifting = False
         y = float(call.target[1])
         self.base_xy = np.array([call.face - radius - 0.01, y])
@@ -203,6 +202,11 @@ def skill_features(call: SkillCall, x: torch.Tensor, links: torch.Tensor) -> tor
     return torch.cat(feats, dim=-1)
 
 
+def feature_dim(n_agents: int) -> int:
+    """Length of ``skill_features``: 9 per sphere, plus the link flag of a pair."""
+    return 9 * n_agents + (1 if n_agents == 2 else 0)
+
+
 class _SkillNet(torch.nn.Module):
     """MLP on normalised ``skill_features`` with ``out_dim`` outputs, fitted by ``_fit``."""
 
@@ -212,7 +216,7 @@ class _SkillNet(torch.nn.Module):
     def __init__(self, n_agents: int, out_dim: int, hidden: int = 128) -> None:
         super().__init__()
         self.n_agents, self.hidden = n_agents, hidden
-        dim = 9 * n_agents + (n_agents == 2)
+        dim = feature_dim(n_agents)
         self.net = torch.nn.Sequential(
             torch.nn.Linear(dim, hidden), torch.nn.SiLU(), torch.nn.Linear(hidden, hidden),
             torch.nn.SiLU(), torch.nn.Linear(hidden, out_dim),
@@ -259,12 +263,12 @@ class _SkillNet(torch.nn.Module):
         return net
 
 
-def _episode_tensors(data: SwarmDataset, calls: list[SkillCall], e: int, device: torch.device
+def _episode_tensors(data: SwarmDataset, call: SkillCall, e: int, device: torch.device
                      ) -> tuple[torch.Tensor, NDArray[np.bool_]]:  # fmt: skip
     v = data.valid[e]
     x = torch.as_tensor(data.spheres[e, :-1][v], dtype=torch.float32, device=device)
     lk = torch.as_tensor(data.links[e, :-1][v], device=device)
-    return skill_features(calls[e], x, lk), v
+    return skill_features(call, x, lk), v
 
 
 class SkillPrior(_SkillNet):
@@ -291,7 +295,7 @@ class SkillPrior(_SkillNet):
         """Fit on the expert labels of every valid step; ``calls[e]`` is episode ``e``'s call."""
         feats, labels = [], []
         for e, call in enumerate(calls):
-            f, v = _episode_tensors(data, calls, e, self.mean.device)
+            f, v = _episode_tensors(data, call, e, self.mean.device)
             feats.append(f)
             labels.append(torch.as_tensor(data.expert[e][v][:, list(call.agents)],
                                           dtype=torch.float32, device=f.device))  # fmt: skip
@@ -317,8 +321,8 @@ class SkillValue(_SkillNet):
             lr: float = 1e-3, batch_size: int = 1024, seed: int = 0) -> list[float]:  # fmt: skip
         """Fit on every valid step of every episode; ``calls[e]`` is episode ``e``'s call."""
         feats, targets = [], []
-        for e in range(len(calls)):
-            f, _ = _episode_tensors(data, calls, e, self.mean.device)
+        for e, call in enumerate(calls):
+            f, _ = _episode_tensors(data, call, e, self.mean.device)
             n = f.shape[0]
             togo = n - torch.arange(n, device=f.device, dtype=torch.float32)
             feats.append(f)
@@ -333,7 +337,7 @@ class SkillPlanner:
     ``prior``, a fraction ``prior_frac`` of the samples are prior rollouts in the model with noise
     ``prior_std`` (TD-MPC2); the model's predicted cost still selects among all samples. With a
     ``value``, the cost is the mean predicted steps to go along the plan instead of
-    ``skill_cost``; the temperature is then in steps."""
+    ``skill_cost``; the softmax temperature is then ``temperature * horizon`` steps."""
 
     def __init__(self, model: SwarmWorldModel, call: SkillCall, n_spheres: int,
                  horizon: int = 15, samples: int = 256, iterations: int = 2, std: float = 0.5,
@@ -347,7 +351,7 @@ class SkillPlanner:
         self.mean = torch.zeros(horizon, len(self.ag), ACT_DIM, device=model.device)
         self.gen = torch.Generator(device=model.device).manual_seed(seed)
         self.prior, self.prior_std = prior, prior_std
-        self.k_prior = round(prior_frac * samples) if prior is not None else 0
+        self.k_prior = min(round(prior_frac * samples), samples - 1) if prior is not None else 0
         self.value = value
 
     def _full(self, plans: torch.Tensor) -> torch.Tensor:
@@ -362,7 +366,6 @@ class SkillPlanner:
         plans = []
         for _ in range(self.h):
             a = self.prior(skill_features(self.call, x, lk))
-            a = a.clone()
             a[..., 3] = torch.tanh(a[..., 3])  # logit -> [-1, 1] like the Gaussian samples
             noise = torch.randn(a.shape, generator=self.gen, device=a.device) * self.prior_std
             a = (a + noise).clamp(-1.0, 1.0)
@@ -420,17 +423,7 @@ def collect_skill(name: str, n_episodes: int, seed: int = 0, noise: float = 0.2)
     agents, horizon, rng = env.possible_agents, MAX_SKILL_STEPS, np.random.default_rng(seed)
     ag = (0,) if name == "roll" else (0, 1)
     obs_dim = env.slices["others"].stop
-    out = {
-        "spheres": np.zeros((n_episodes, horizon + 1, 2, 9)),
-        "links": np.zeros((n_episodes, horizon + 1, 2, 2), dtype=bool),
-        "obs": np.zeros((n_episodes, horizon + 1, 2, obs_dim)),
-        "actions": np.zeros((n_episodes, horizon, 2, ACT_DIM)),
-        "expert": np.zeros((n_episodes, horizon, 2, ACT_DIM)),
-        "rewards": np.zeros((n_episodes, horizon)),
-        "valid": np.zeros((n_episodes, horizon), dtype=bool),
-        "goal": np.zeros((n_episodes, 3)),
-        "success": np.zeros(n_episodes, dtype=bool),
-    }
+    out = empty_arrays(n_episodes, horizon, 2, obs_dim)
     starts, targets = np.zeros((n_episodes, 2, 3)), np.zeros((n_episodes, 2))
     steps = np.zeros(n_episodes, dtype=np.int64)
 

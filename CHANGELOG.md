@@ -51,6 +51,15 @@ All notable changes to this project are documented here. The format follows
   `--time-penalty`, best chunk on selection seeds) and writes `ppo.pt` instead of
   `imagination.pt`.
 
+### Fixed
+
+- `swarm_plan.perturb_dynamics` recomputes the derived constants (`mj_setConst`) after scaling
+  masses; `swarm.Course` rejects faces that leave no room for the start queue or lie past the
+  last allowed face; start sampling raises `RuntimeError` instead of looping when the floor is
+  too small for the swarm; `SkillPlanner` keeps one sampled plan with `prior_frac=1`;
+  `improve_with_ppo(anchor=...)` keeps the KL and the normalisation statistics on the imitation
+  policy across `train_swarm` chunks.
+
 ## [1.0.0] - 2026-11-20
 
 Complete rewrite on MuJoCo. Breaking: the PyBullet API, the `stable_baselines` examples and the

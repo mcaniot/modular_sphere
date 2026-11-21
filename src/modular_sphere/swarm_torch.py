@@ -185,14 +185,12 @@ class SwarmWorldModel:
     ) -> tuple[Array, Array]:
         """``spheres0`` (B, N, 9), ``links0`` (B, N, N), ``actions`` (B, H, N, 4) ->
         predicted spheres (B, H, N, 9) and link probabilities (B, H, N, N)."""
-        self.net.eval()
         x, lk, acts = self._t(spheres0), self._t(links0), self._t(actions)
         xs, ls = [], []
         for k in range(acts.shape[1]):
             x, lk = self.step(x, lk, acts[:, k])
             xs.append(x)
             ls.append(lk)
-        self.net.train()
         return torch.stack(xs, 1).double().cpu().numpy(), torch.stack(ls, 1).double().cpu().numpy()
 
     def save(self, path: str) -> None:
@@ -478,8 +476,9 @@ def improve_in_imagination(
             ret = rewards[k] + gamma * conts[k] * ((1 - lam) * values_t[k + 1] + lam * ret)
             returns.append(ret)
         returns = returns[::-1]
-        # Actor: maximise lambda-returns differentiably (rewards through the model) + BC.
-        actor_ret = values[-1].detach() * 0
+        # Actor: maximise the discounted model return plus the critic bootstrap, differentiably
+        # (rewards through the model) + BC.
+        actor_ret = torch.zeros_like(values[-1])
         disc = 1.0
         for k in range(horizon):
             actor_ret = actor_ret + disc * rewards[k]
@@ -555,6 +554,7 @@ def improve_with_ppo(
     log_std: float = -1.5,
     lr: float = 3e-5,
     seed: int = 0,
+    anchor: SwarmPolicy | None = None,
 ) -> list[dict[str, float]]:
     """Fine-tune ``policy`` in place with PPO (Schulman et al., 2017) on world-model rollouts.
 
@@ -565,7 +565,8 @@ def improve_with_ppo(
     network output (fixed std ``exp(log_std)``) and Bernoulli on attach; deployment uses the mean.
     The reward is the task reward minus ``time_penalty`` per step (speed objective) and the
     ensemble disagreement penalty (MOPO); a KL term keeps the policy near its initial (DAgger)
-    behaviour, the trust region against the greedy short-horizon reward.
+    behaviour (or near ``anchor``, the policy to stay close to over several calls), the trust
+    region against the greedy short-horizon reward.
     """
     torch.manual_seed(seed)
     dev = policy.device
@@ -574,7 +575,8 @@ def improve_with_ppo(
     sph, links, goal = t(data.spheres), t(data.links), t(data.goal)
     e_idx, t_idx = torch.nonzero(torch.as_tensor(data.valid, device=dev), as_tuple=True)
     reference = _PolicyNet(policy.n, policy.hidden).to(dev)
-    reference.load_state_dict(policy.net.state_dict())
+    ref_policy = anchor or policy
+    reference.load_state_dict(ref_policy.net.state_dict())
     std = torch.tensor(log_std, device=dev)
     critic = _Critic(policy.hidden).to(dev)
     actor_opt = torch.optim.Adam(policy.net.parameters(), lr=lr)
@@ -630,7 +632,7 @@ def improve_with_ppo(
                     ratio * adv_f[idx], ratio.clamp(1 - clip, 1 + clip) * adv_f[idx]
                 )
                 with torch.no_grad():
-                    ref = reference(flat["obs"][idx], policy.stats)
+                    ref = reference(flat["obs"][idx], ref_policy.stats)
                 ref_n = torch.distributions.Normal(ref[..., :3], std.exp().expand_as(ref[..., :3]))
                 kl = torch.distributions.kl_divergence(dists[0], ref_n).sum((-1, -2))
                 kl = kl + _bernoulli_kl(dists[1].logits, ref[..., 3]).sum(-1)

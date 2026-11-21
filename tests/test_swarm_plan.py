@@ -196,7 +196,8 @@ def test_fallen_spheres_are_pulled_back_up_by_free_platform_spheres():
     sched._rescue(spheres)
     assert sorted(sched.rescues.values()) == [-1, 2]
     i = next(k for k, h in sched.rescues.items() if h == 2)
-    sched.runs.pop(i), sched.runs.pop(2)  # the pull ended: both go to slots
+    sched.runs.pop(i)  # the pull ended: both go to slots
+    sched.runs.pop(2)
     spheres[i, :3] = (0.15, spheres[i, 1], top)
     sched._rescue(spheres)
     ((j, h),) = sched.rescues.items()  # the other one gets a helper among the two
@@ -211,6 +212,9 @@ def test_perturbed_dynamics_stay_in_range_and_episodes_still_run():
     fric = env.model.geom_friction[:, 0] / ref.model.geom_friction[:, 0]
     assert np.ptp(mass) < 1e-9 and DYNAMICS_MASS[0] <= mass[0] <= DYNAMICS_MASS[1]
     assert np.ptp(fric) < 1e-9 and DYNAMICS_FRICTION[0] <= fric[0] <= DYNAMICS_FRICTION[1]
+    free = ref.model.body_invweight0[:, 0] > 0
+    weight = env.model.body_invweight0[free, 0] / ref.model.body_invweight0[free, 0]
+    np.testing.assert_allclose(weight, 1.0 / mass[0])  # mass-derived constants follow the masses
     sched = SkillScheduler(4, _DistEffect(), script_executor())
     ev = evaluate_schedule(sched, [200_000], dynamics=perturb_dynamics)
     assert ev.steps[0] > 0

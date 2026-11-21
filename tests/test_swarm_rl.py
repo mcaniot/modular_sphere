@@ -4,26 +4,12 @@ import threading
 import numpy as np
 import pytest
 
-from modular_sphere.swarm import STEP_H, WALL_H, SphereSwarmStepEnv
+from modular_sphere.swarm import SphereSwarmStepEnv
 
 torch = pytest.importorskip("torch")
 
 from modular_sphere.swarm_rl import SwarmVecEnv, _worker, evaluate, train_mappo  # noqa: E402
 from modular_sphere.swarm_torch import SwarmPolicy  # noqa: E402
-
-
-@pytest.mark.parametrize("height", [0.0, WALL_H])
-def test_step_height_is_validated(height):
-    with pytest.raises(ValueError, match="step_height"):
-        SphereSwarmStepEnv(n_spheres=2, step_height=height)
-
-
-def test_lower_step_moves_the_goal_down():
-    low, high = SphereSwarmStepEnv(n_spheres=2, step_height=0.05), SphereSwarmStepEnv(n_spheres=2)
-    low.reset(seed=0)
-    high.reset(seed=0)
-    assert low.step_height == 0.05 and high.step_height == STEP_H
-    assert high.goal[2] - low.goal[2] == pytest.approx(STEP_H - 0.05)
 
 
 def _policy(n):
