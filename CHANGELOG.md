@@ -6,6 +6,22 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `modular_sphere.swarm.SphereSwarmStepEnv`: first 3D multi-agent task (PettingZoo
+  `ParallelEnv`). The whole swarm of N spheres must climb a step higher than the sphere radius
+  and gather on the platform, using distance-preserving links between spheres and an internal
+  lift force; scripted `SwarmClimbPolicy` solves it. New dependency: `pettingzoo>=1.25`.
+- Swarm learning: `swarm_data` (expert datasets with DART noise and DAgger relabelling),
+  `swarm_torch` (interaction-network world model, decentralised Deep Sets policy, actor-critic
+  fine-tuning in imagination) and the `tools.train_swarm` pipeline with a paired McNemar report.
+  World models use wall and step distance features, an ensemble disagreement penalty and
+  exploration data with held random actions; the report measures speed against the expert.
+- `swarm_torch.improve_with_ppo`: PPO in the world-model ensemble with a time penalty and a KL
+  term to the DAgger policy; `train_swarm` now uses it (`--ppo-iterations`, `--kl-weight`,
+  `--time-penalty`, best chunk on selection seeds) and writes `ppo.pt` instead of
+  `imagination.pt`.
+
 ## [1.0.0] - 2026-11-20
 
 Complete rewrite on MuJoCo. Breaking: the PyBullet API, the `stable_baselines` examples and the

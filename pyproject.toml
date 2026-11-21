@@ -15,6 +15,7 @@ dependencies = [
     "imageio[ffmpeg]>=2.38",
     "gymnasium[mujoco]>=1.0",
     "numpy>=1.24",
+    "pettingzoo>=1.25",
 ]
 keywords = ["mujoco", "robotics", "world model", "model-based RL", "gymnasium"]
 classifiers = [
