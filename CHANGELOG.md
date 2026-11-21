@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Working paper `docs/paper/skill_world_models.md` (methods, results with confidence intervals and
+  paired tests, negative results, verified references) and its experiment scripts.
 - `modular_sphere.swarm.SphereSwarmStepEnv`: first 3D multi-agent task (PettingZoo
   `ParallelEnv`). The whole swarm of N spheres must climb a step higher than the sphere radius
   and gather on the platform, using distance-preserving links between spheres and an internal
