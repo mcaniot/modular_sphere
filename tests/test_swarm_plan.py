@@ -1,21 +1,28 @@
 import numpy as np
 import pytest
 
-from modular_sphere.swarm import STEP_X, SphereSwarmStepEnv
+from modular_sphere.swarm import STEP_H, STEP_X, Course, SphereSwarmStepEnv
 
 torch = pytest.importorskip("torch")
 
 from modular_sphere.swarm_plan import (  # noqa: E402
+    DYNAMICS_FRICTION,
+    DYNAMICS_MASS,
     LANE_Y,
+    QUEUE_SIDE,
     EffectModel,
+    Level,
     SkillScheduler,
     base_spot,
+    course_levels,
     evaluate_schedule,
     lane_lines,
+    perturb_dynamics,
     plan,
     prior_executor,
     queue_spot,
     script_executor,
+    segments_to_data,
     wam_executor,
 )
 from modular_sphere.swarm_skills import MAX_SKILL_STEPS, SKILLS, SkillPrior, SkillValue  # noqa: E402
@@ -30,8 +37,9 @@ class _DistEffect(EffectModel):
     def __init__(self) -> None:
         super().__init__({})
 
-    def duration(self, name, states, target):
-        goal = target if name == "roll" else np.array([STEP_X, target[1]])
+    def duration(self, name, states, target, level=None):
+        level = Level() if level is None else level
+        goal = target if name == "roll" else np.array([level.face, target[1]])
         return 40.0 + 50.0 * float(np.linalg.norm(states[0, :2] - goal))
 
 
@@ -97,3 +105,112 @@ def test_learned_executors_run_and_stuck_skills_restart():
     sched.reset(spheres[:, :3], env.goal)
     act = sched.act([obs[a] for a in env.possible_agents], spheres, env.links)
     assert act.shape == (4, 4) and np.all(np.abs(act) <= 1.0)
+
+
+def test_labelled_schedule_records_chain_segments_as_skill_data():
+    sched = SkillScheduler(4, _DistEffect(), script_executor(), labeler=script_executor(),
+                           noise=0.1, seed=3)  # fmt: skip
+    evaluate_schedule(sched, [200_000])
+    assert len(sched.segments) == len(sched.events)
+    for seg in sched.segments:
+        t, k = seg.labels.shape[:2]
+        assert seg.spheres.shape == (t + 1, k, 9) and seg.links.shape == (t + 1, k, k)
+        assert k == len(seg.call.agents) and np.isfinite(seg.labels).all()
+    data, calls = segments_to_data(sched.segments, "climb")
+    assert len(calls) == data.spheres.shape[0] == 2 and calls[0].agents == (0, 1)
+    assert data.expert.shape == (2, MAX_SKILL_STEPS, 2, 4) and data.success.all()
+    assert data.valid.sum() == sum(len(s.labels) for s in sched.segments if s.call.name == "climb")
+    roll, _ = segments_to_data(sched.segments, "roll")
+    assert np.all(roll.spheres[:, :, 1] == 0.0)  # single-sphere calls pad the second slot
+    priors = {s: SkillPrior(N_AGENTS[s]) for s in SKILLS}
+    stuck = SkillScheduler(4, _DistEffect(), prior_executor(priors), max_lanes=1,
+                           labeler=script_executor())  # fmt: skip
+    evaluate_schedule(stuck, [200_001])
+    assert any(not s.success for s in stuck.segments)
+
+
+def test_course_levels_frame_the_skill_calls_of_each_step():
+    course = Course((-0.3, 0.5), (0.12, 0.14))
+    low, high = course_levels(course)
+    assert low == Level(-0.3, 0.0, 0.12) and high == Level(0.5, 0.12, 0.14, -0.3)
+    roll = high.call("roll", (0,), np.array([0.2, 0.0]))
+    assert roll.floor == 0.12 - STEP_H and roll.face == 0.5 and roll.back == -0.3
+    climb = high.call("climb", (0, 1), np.array([0.0, 0.1]))
+    assert climb.floor == 0.12 and climb.rise == 0.14
+    assert low.call("roll", (0,), np.zeros(2)).floor == 0.0
+    assert base_spot(0.0, level=high)[2] == 0.12 + 0.1
+    assert queue_spot(0.0, 5, level=high)[0] >= -0.3 + 0.1 + 0.05 - 1e-9
+    for y in (-0.4, 0.4):  # a floor too short for the queue: climbers wait side by side
+        spots = np.array([queue_spot(y, q, level=high) for q in range(4)])
+        gaps = np.linalg.norm(spots[:, None, :2] - spots[None, :, :2], axis=-1)
+        assert gaps[~np.eye(4, dtype=bool)].min() >= 0.2 - 1e-9
+        assert np.abs(spots[:, 1]).max() <= LANE_Y + QUEUE_SIDE + 1e-9
+
+
+def test_scripted_schedule_climbs_a_two_step_course_level_by_level():
+    course = Course((-0.3, 0.5), (0.15, 0.15))
+    sched = SkillScheduler(4, _DistEffect(), script_executor())
+    ev = evaluate_schedule(sched, [300_000], lambda seed: course)
+    assert ev.success[0] and sched.level == 1 and ev.restarts[0] == 0
+    assert [e[1] for e in sched.events].count("pull") == 2 * ev.lanes[0]
+
+
+def _platform_scheduler():
+    sched = SkillScheduler(4, _DistEffect(), script_executor())
+    pos = np.array([[-1.0, y, 0.1] for y in (-0.9, -0.3, 0.3, 0.9)])
+    sched.reset(pos, np.array([1.4, 0.0, 0.4]), Course((-0.3, 0.5), (0.15, 0.15)))
+    sched.runs.clear()
+    spheres = np.zeros((4, 9))
+    spheres[:, :3] = pos
+    return sched, spheres, sched.top.floor + 0.1
+
+
+def test_crossing_slot_rolls_swap_targets():
+    sched, spheres, top = _platform_scheduler()
+    a, b = np.array([0.3, 0.6]), np.array([0.3, -0.3])
+    sched.slots = [a, b]
+    spheres[0, :3] = (0.3, -0.25, top)
+    sched._gather(0, spheres)
+    assert np.allclose(sched.up[0], b)
+    spheres[0, :2], spheres[1, :3] = (0.3, 0.6), (0.3, -0.3, top)  # sphere 0 got pushed across
+    sched._gather(1, spheres)
+    assert np.allclose(sched.up[0], a) and np.allclose(sched.up[1], b)
+    assert np.allclose(sched.runs[0].call.target, a) and not sched.slots
+
+
+def test_fallen_spheres_are_pulled_back_up_by_free_platform_spheres():
+    sched, spheres, top = _platform_scheduler()
+    spheres[0, :3], spheres[1, :3] = (0.0, 0.3, top), (0.1, -0.5, top)
+    sched._gather(0, spheres)
+    sched._gather(1, spheres)
+    free = len(sched.slots)
+    spheres[0, :3] = (-0.45, 0.3, 0.1)  # sphere 0 fell back in front of the face
+    sched._rescue(spheres)
+    assert sched.rescues == {0: 1} and sched.runs[0] is sched.runs[1]
+    assert sched.runs[0].call.name == "pull" and len(sched.slots) == free + 2 and not sched.up
+    spheres[1, :3] = (-0.45, -0.5, 0.1)  # the helper fell too: nobody left on the platform
+    sched._rescue(spheres)
+    assert sched.rescues == {0: -1, 1: -1} and not sched.runs
+    spheres[2, :3] = (0.2, 0.0, top)
+    sched._gather(2, spheres)
+    sched._rescue(spheres)
+    assert sorted(sched.rescues.values()) == [-1, 2]
+    i = next(k for k, h in sched.rescues.items() if h == 2)
+    sched.runs.pop(i), sched.runs.pop(2)  # the pull ended: both go to slots
+    spheres[i, :3] = (0.15, spheres[i, 1], top)
+    sched._rescue(spheres)
+    ((j, h),) = sched.rescues.items()  # the other one gets a helper among the two
+    assert j == 1 - i and h in (i, 2) and set(sched.up) == {i, 2} - {h}
+
+
+def test_perturbed_dynamics_stay_in_range_and_episodes_still_run():
+    env, ref = SphereSwarmStepEnv(n_spheres=4), SphereSwarmStepEnv(n_spheres=4)
+    perturb_dynamics(env, 7)
+    body = ref.model.body_mass > 0
+    mass = env.model.body_mass[body] / ref.model.body_mass[body]
+    fric = env.model.geom_friction[:, 0] / ref.model.geom_friction[:, 0]
+    assert np.ptp(mass) < 1e-9 and DYNAMICS_MASS[0] <= mass[0] <= DYNAMICS_MASS[1]
+    assert np.ptp(fric) < 1e-9 and DYNAMICS_FRICTION[0] <= fric[0] <= DYNAMICS_FRICTION[1]
+    sched = SkillScheduler(4, _DistEffect(), script_executor())
+    ev = evaluate_schedule(sched, [200_000], dynamics=perturb_dynamics)
+    assert ev.steps[0] > 0

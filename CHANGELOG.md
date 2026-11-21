@@ -18,7 +18,24 @@ All notable changes to this project are documented here. The format follows
 - `swarm_plan`: skill scheduler that composes the skills in parallel lanes over sphere subsets,
   choosing roles and lanes by the makespan predicted with the steps-to-go effect models
   (`EffectModel`, `plan`, `SkillScheduler`), with scripted, cloned or WAM skill executors and
-  `evaluate_schedule`.
+  `evaluate_schedule`. With a `labeler` and DART `noise`, the scheduler records every executed
+  skill call (`Segment`) and `segments_to_data` turns them into skill data whose starts are the
+  end states of the preceding skills (skill-chaining data, DAgger with learned executors).
+- Courses of steps: `swarm.Course` (faces and rises), `random_course` (1 to 3 steps with random
+  faces and rises) and the `course` option of `SphereSwarmStepEnv` (default: the single step, so
+  default episodes are unchanged); `SwarmClimbPolicy` climbs a course level by level and waits in
+  front of each next face. Skill calls carry their step frame (`SkillCall.face`, `floor`, `rise`,
+  `back`), so skills learned on the training step run on any level. `SkillScheduler` plans and
+  replans level by level (`Level`, `course_levels`), swaps crossing slot rolls, pulls a sphere
+  that fell back off the platform up again, and `evaluate_schedule` takes per-seed courses.
+  Climbers queued on a floor too short for the queue wait side by side (`QUEUE_SIDE`).
+- Skill networks and `SkillWAM` floor their feature normalisation at `STD_FLOOR`, so nearly
+  constant features no longer amplify sensor noise; `SkillWAM.fit(input_noise=...)` trains on
+  noisy history frames with clean targets.
+- `swarm_plan.perturb_dynamics` (domain randomisation of sphere masses and friction,
+  `DYNAMICS_MASS`, `DYNAMICS_FRICTION`) and the `dynamics` option of `evaluate_schedule`.
+- Paper section 5.9 (adaptability, robust MOSAIC) and its scripts `skills_adapt.py`,
+  `skills_adapt_stats.py`; `skills_chain.py` options `input_noise`, `dynamics`, `rises`, `extra`.
 - Tests for `swarm_rl`, `swarm_skills`, `swarm_wam`, `swarm_plan` and the `step_height` option.
 - `modular_sphere.swarm.SphereSwarmStepEnv`: first 3D multi-agent task (PettingZoo
   `ParallelEnv`). The whole swarm of N spheres must climb a step higher than the sphere radius

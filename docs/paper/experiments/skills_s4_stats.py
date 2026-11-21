@@ -1,10 +1,13 @@
-"""Paired statistics of skills_s4.py (run with: uv run --with scipy python skills_s4_stats.py)."""
+"""Paired statistics of skills_s4.py (run with: uv run --with scipy python skills_s4_stats.py
+[NAME], NAME of the pickle, default s4_50)."""
 
 import pickle
+import sys
 
 from scipy.stats import beta, binomtest
 
-r = pickle.load(open("/home/mcaniot/Documents/modular_sphere/data/swarm/skills/s4_50.pkl", "rb"))
+name = sys.argv[1] if len(sys.argv) > 1 else "s4_50"
+r = pickle.load(open(f"/home/mcaniot/Documents/modular_sphere/data/swarm/skills/{name}.pkl", "rb"))
 
 
 def ci(k, n):

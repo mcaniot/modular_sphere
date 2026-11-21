@@ -35,6 +35,7 @@ tendon is a pure distance constraint, ``eq_data[0]`` = length - ``tendon_length0
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from itertools import combinations
 from typing import Any, ClassVar
 
@@ -57,6 +58,11 @@ START_ZONE = (-1.6, -0.4, -1.2, 1.2)  # x_min, x_max, y_min, y_max of start cent
 GOAL_ZONE = (1.1, 1.5, -1.0, 1.0)  # gathering zone centre bounds, the zone stays on the platform
 MIN_START_GAP = 0.1  # min distance between start surfaces [m]
 ACT_DIM = 4  # fx, fy, lift, attach
+COURSE_STEPS = (1, 3)  # random courses: number of steps ...
+COURSE_RISES = (0.12, 0.15)  # ... rise of each step: above radius, the pull fails beyond 0.15 [m]
+COURSE_DEPTHS = (0.65, 0.85)  # ... platform depth between two faces [m] ...
+COURSE_FIRST_X = (-0.4, 0.5)  # ... first face [m] ...
+COURSE_LAST_X = 1.0  # ... and last face, leaving room for the gathering zone [m]
 _LINK_RGBA = (0.1, 0.9, 0.9, 1.0)
 _HIDDEN_GROUP = 5
 
@@ -64,6 +70,43 @@ _HIDDEN_GROUP = 5
 def gather_radius(n_spheres: int) -> float:
     """Radius [m] of the gathering zone: the N spheres fit in it with room to spare."""
     return 0.2 * float(np.sqrt(n_spheres))
+
+
+@dataclass(frozen=True)
+class Course:
+    """Steps of the arena floor, each spanning the arena width up to the east wall: face ``x``
+    (increasing) and rise of each step [m]. The default is the single step of the task."""
+
+    faces: tuple[float, ...] = (STEP_X,)
+    rises: tuple[float, ...] = (STEP_H,)
+
+    def __post_init__(self) -> None:
+        if not self.faces or len(self.faces) != len(self.rises):
+            raise ValueError(f"course needs as many faces as rises, got {self}")
+        if np.any(np.diff(self.faces) <= 0) or min(self.rises) <= 0:
+            raise ValueError(f"course faces must increase and rises be positive, got {self}")
+
+    def floor(self, k: int) -> float:
+        """Floor height in front of step ``k`` (``k = len(faces)``: the top platform) [m]."""
+        return float(sum(self.rises[:k]))
+
+    @property
+    def top(self) -> float:
+        return self.floor(len(self.rises))
+
+
+def random_course(rng: np.random.Generator) -> Course:
+    """Course of 1 to 3 steps with random faces and rises (``COURSE_*`` bounds)."""
+    k = int(rng.integers(COURSE_STEPS[0], COURSE_STEPS[1] + 1))
+    while True:  # rejection sampling: the last face must leave room for the gathering zone
+        depths = rng.uniform(*COURSE_DEPTHS, k - 1)
+        faces = rng.uniform(*COURSE_FIRST_X) + np.concatenate([[0.0], np.cumsum(depths)])
+        if faces[-1] <= COURSE_LAST_X:
+            break
+    rises = rng.uniform(*COURSE_RISES, k)
+    return Course(
+        tuple(round(float(f), 3) for f in faces), tuple(round(float(h), 3) for h in rises)
+    )
 
 
 def obs_slices(n_spheres: int) -> dict[str, slice]:
@@ -98,16 +141,20 @@ class SphereSwarmStepEnv(ParallelEnv):
         height: int = 480,
         camera_name: str = "overview",
         step_height: float = STEP_H,
+        course: Course | None = None,
     ) -> None:
         if n_spheres < 2:
             raise ValueError(f"n_spheres must be >= 2, got {n_spheres}")
         if not 0 < step_height < WALL_H:
             raise ValueError(f"step_height must be in (0, {WALL_H}), got {step_height}")
-        self.step_height = step_height  # lower steps: curricula for learning (default STEP_H)
+        # lower steps: curricula for learning (default STEP_H); a course replaces the single step
+        self.course = Course(rises=(step_height,)) if course is None else course
+        self.step_height = self.course.top
         if render_mode not in (None, *self.metadata["render_modes"]):
             raise ValueError(f"render_mode must be None or 'rgb_array', got {render_mode!r}")
         self.n, self.render_mode = n_spheres, render_mode
-        self.max_steps = STEPS_PER_SPHERE * n_spheres if max_steps is None else max_steps
+        horizon = STEPS_PER_SPHERE * n_spheres * len(self.course.faces)
+        self.max_steps = horizon if max_steps is None else max_steps
         self.gather_radius = gather_radius(n_spheres)
         self._size, self._camera = (width, height), camera_name
         self.possible_agents = [f"sphere_{i}" for i in range(n_spheres)]
@@ -141,16 +188,19 @@ class SphereSwarmStepEnv(ParallelEnv):
         for name in ("force_x", "force_y"):
             spec.delete(spec.actuator(name))
         spec.delete(spec.body("sphere"))
-        spec.worldbody.add_geom(
-            name="step",
-            type=mujoco.mjtGeom.mjGEOM_BOX,
-            pos=((STEP_X + 2.0) / 2, 0, self.step_height / 2),
-            size=((2.0 - STEP_X) / 2, 2.0, self.step_height / 2),
-            material="wall",
-        )
+        for k, x in enumerate(self.course.faces):
+            h = self.course.floor(k + 1)
+            spec.worldbody.add_geom(
+                name="step" if k == 0 else f"step_{k}",
+                type=mujoco.mjtGeom.mjGEOM_BOX,
+                pos=((x + 2.0) / 2, 0, h / 2),
+                size=((2.0 - x) / 2, 2.0, h / 2),
+                material="wall",
+            )
+        wall_h = max(WALL_H, self.course.top + WALL_H - STEP_H)
         for wall in ("wall_north", "wall_south", "wall_east", "wall_west"):
             geom = spec.geom(wall)
-            geom.size[2], geom.pos[2] = WALL_H / 2, WALL_H / 2
+            geom.size[2], geom.pos[2] = wall_h / 2, wall_h / 2
         zone = spec.body("goal").first_geom()  # flat translucent disc on the platform surface
         zone.type = mujoco.mjtGeom.mjGEOM_CYLINDER
         zone.size = (gather_radius(self.n), 0.002, 0)
@@ -214,7 +264,8 @@ class SphereSwarmStepEnv(ParallelEnv):
         for i, xy in enumerate(self._sample_starts()):
             self.data.qpos[self._qpos[i] : self._qpos[i] + 3] = (*xy, self.radius)
         x0, x1, y0, y1 = GOAL_ZONE
-        goal = (self.np_random.uniform(x0, x1), self.np_random.uniform(y0, y1))
+        x0 = max(x0, self.course.faces[-1] + 0.45)  # zone beyond the last face
+        goal = (self.np_random.uniform(x0, max(x1, x0)), self.np_random.uniform(y0, y1))
         self.data.mocap_pos[self._goal_mocap] = (*goal, self.step_height + self.radius)
         mujoco.mj_forward(self.model, self.data)
         self.agents = self.possible_agents.copy()
@@ -345,6 +396,7 @@ class SphereSwarmStepEnv(ParallelEnv):
 
     def _sample_starts(self) -> list[NDArray[np.float64]]:
         x0, x1, y0, y1 = START_ZONE
+        x1 = min(x1, self.course.faces[0] - 0.9)  # room for the queues in front of the first face
         starts: list[NDArray[np.float64]] = []
         while len(starts) < self.n:  # rejection sampling, the zone holds far more than N spheres
             xy = np.array([self.np_random.uniform(x0, x1), self.np_random.uniform(y0, y1)])
@@ -379,6 +431,10 @@ class SwarmClimbPolicy:
     pushes into the base and lifts, orbiting over it, then releases on top and rolls to its slot
     in the gathering zone. The last climber stays at the platform edge as a helper: it links with
     the base, which lifts and pivots over the helper onto the platform. Everyone then gathers.
+
+    On a ``course`` of several steps, the swarm repeats this at each face: below the last step,
+    released spheres wait on a line in front of the next face, out of the climbing lane, and the
+    next step starts as soon as the base is up.
     """
 
     KV = 3.0
@@ -391,12 +447,19 @@ class SwarmClimbPolicy:
     EDGE_X = STEP_X + 0.035  # helper centre on the platform, within link range of the base [m]
     SLOT_PITCH = 0.22  # hexagonal packing pitch of the gathering slots [m]
 
-    def __init__(self, n_spheres: int = N_SPHERES, radius: float = 0.1) -> None:
+    WAIT_X = 0.2  # waiting line behind the next face [m] ...
+    WAIT_DY = 0.3  # ... its first slots this far from the climbing lane, then this pitch [m]
+
+    def __init__(
+        self, n_spheres: int = N_SPHERES, radius: float = 0.1, course: Course | None = None
+    ) -> None:
         self.n, self.r = n_spheres, radius
+        self.course = Course() if course is None else course
         self.slices = obs_slices(n_spheres)
         self.reset()
 
     def reset(self) -> None:
+        self._level = 0  # index of the step being climbed
         self._roles: tuple[str, list[str]] | None = None
         self._k = 0  # index of the active climber, len(climbers) during the final pull-up
         self._lifting = False
@@ -426,6 +489,14 @@ class SwarmClimbPolicy:
         slots = [goal[:2] + self.SLOT_PITCH * np.asarray(c) for c in cells[: self.n]]
         return sorted(slots, key=lambda s: -s[0])
 
+    def _wait_slots(self, face: float, y: float) -> list[NDArray[np.float64]]:
+        """``n`` slots on a line in front of the next ``face``, alternating sides of the lane
+        ``y``, closest first; slots past the side walls move to the other side."""
+        lim = 2.0 - 3 * self.r
+        dys = [self.WAIT_DY * (1 + j // 2) * (1 if j % 2 == 0 else -1) for j in range(4 * self.n)]
+        ys = [v for v in (y + dy for dy in dys) if abs(v) <= lim][: self.n]
+        return [np.array([face - self.WAIT_X, v]) for v in ys]
+
     def _linked(self, o: NDArray[np.float64], i: int, j: int) -> bool:
         """Linked flag of sphere ``j`` in the observation ``o`` of sphere ``i``."""
         others = o[self.slices["others"]].reshape(self.n - 1, 7)
@@ -441,14 +512,21 @@ class SwarmClimbPolicy:
         agents = sorted(obs, key=lambda a: int(a.rsplit("_", 1)[1]))
         o0 = obs[agents[0]]
         goal = o0[self.slices["pos"]] + o0[self.slices["goal_rel"]]
-        base_xy = np.array([STEP_X - self.r - 0.01, goal[1]])
+        course, level = self.course, self._level
+        face, last = course.faces[level], level == len(course.faces) - 1
+        base_xy = np.array([face - self.r - 0.01, goal[1]])
         climb_xy = base_xy - (2 * self.r + 0.03, 0.0)
-        edge_xy = np.array([self.EDGE_X, goal[1]])
+        edge_xy = np.array([face + self.EDGE_X - STEP_X, goal[1]])
+        # the staging point stays on the current floor, off the previous step's edge
+        stage_x = climb_xy[0] - self.STAGE
+        if level > 0:
+            stage_x = max(stage_x, course.faces[level - 1] + self.r + 0.05)
         if self._roles is None:
             order = [agents[i] for i in np.argsort([-obs[a][0] for a in agents], kind="stable")]
             self._roles = (order[0], order[1:])
         base, climbers = self._roles
-        slots = dict(zip([*climbers, base], self._slots(goal), strict=True))
+        ends = self._slots(goal) if last else self._wait_slots(course.faces[level + 1], goal[1])
+        slots = dict(zip([*climbers, base], ends, strict=True))
         ob = obs[base]
         act = {a: np.zeros(ACT_DIM) for a in agents}
         for a in self._up:
@@ -458,7 +536,7 @@ class SwarmClimbPolicy:
             oc = obs[climber]
             if not self._lifting:
                 base_ready = np.linalg.norm(ob[:2] - base_xy) < self.ALIGN_TOL
-                slot = climb_xy if base_ready else climb_xy - (self.STAGE, 0.0)
+                slot = climb_xy if base_ready else np.array([stage_x, climb_xy[1]])
                 act[base][:2] = self._track(ob, base_xy)
                 act[climber][:2] = self._track(oc, slot)
                 ready = base_ready and np.linalg.norm(oc[:2] - climb_xy) < self.ALIGN_TOL
@@ -467,7 +545,7 @@ class SwarmClimbPolicy:
             if self._lifting:
                 act[base][:] = (1.0, 0.0, 0.0, 1.0)
                 act[climber][:] = self._lift(ob, oc)
-                if oc[2] > 3 * self.r - self.TOP_MARGIN:
+                if oc[2] > course.floor(level) + 3 * self.r - self.TOP_MARGIN:
                     self._up.add(climber)
                     self._k, self._lifting = self._k + 1, False
         elif base not in self._up:  # the last climber, at the edge, pulls the base up
@@ -491,6 +569,15 @@ class SwarmClimbPolicy:
                 act[base][:] = self._lift(oh, ob)
                 if ob[2] > oh[2] + self.r and ob[0] > oh[0] - 0.05:
                     self._up.add(base)
+        elif (
+            not last
+            and all(  # everyone waits in front of the next face: next step, new roles
+                np.linalg.norm(obs[a][:2] - slots[a]) < 0.1 and np.linalg.norm(obs[a][3:5]) < 0.1
+                for a in agents
+            )
+        ):
+            self._level += 1
+            self._roles, self._k, self._up, self._lifting = None, 0, set(), False
         return {a: np.clip(v, -1.0, 1.0) for a, v in act.items()}
 
 

@@ -159,6 +159,29 @@ Status (N = 4, 50 test seeds): DAgger and PPO both succeed on 47/50 (McNemar p =
 `speed_vs_expert` 0.919 -> 0.942, and on the 45 seeds both solve it needs 246.5 instead of 253.5
 steps on average, faster on 42 and slower on 1 (exact sign test p < 1e-4).
 
+#### MOSAIC: skills, skill world models and a parallel scheduler
+
+Courses: `swarm.Course` (step faces and rises) and `random_course` (1 to 3 steps) through the
+`course` option of `SphereSwarmStepEnv` (default: the single step, so default episodes are
+unchanged). MOSAIC splits the climb into three skills (roll, climb, pull). Each skill has a small
+world-action model (`swarm_wam.SkillWAM`), trained on scripted skill data and on skill-chaining
+data. A scheduler (`swarm_plan.SkillScheduler`) runs the skills in parallel lanes over subsets of
+spheres. It chooses the plan by the makespan predicted with steps-to-go effect models
+(`SkillValue`), replans level by level, and pulls back up any sphere that fell off the platform.
+Each skill call carries the frame of its step, so skills learned on one step run on any course.
+
+Results (paper: [`docs/paper/skill_world_models.md`](docs/paper/skill_world_models.md), 50 seeds,
+exact McNemar on success and sign test on steps against the expert):
+
+- **Test seeds (one step, N = 4):** 50/50 like the expert, in 147 steps against 248.
+- **Unknown random courses:** 50/50 like the expert, in about half the expert's steps.
+- **Fresh perturbed courses:** with a normalisation floor, training on noisy inputs, and chain data
+  with randomised mass, friction and rise mixed with the nominal data, MOSAIC matches the
+  expert's success in seven of nine conditions, at about half its steps. The conditions are
+  friction ×0.5 and ×1.5, mass ×1.5, rise 0.10 m and N = 5 or 6.
+- **Open limits:** under 5 mm of sensor noise MOSAIC solves 42/50, against 49/50 for the expert;
+  with spheres 30 % lighter it solves 28/50, against 50/50.
+
 ## Simulation contract
 
 | Item | Value |

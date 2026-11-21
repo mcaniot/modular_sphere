@@ -1,4 +1,4 @@
-# Small expert world models per skill for collective step climbing of linked spheres
+# MOSAIC: small expert world models per skill, composed in parallel, for collective climbing of linked spheres
 
 *Working paper, draft of 2026-11-21. Code: branch `feat/swarm-step-climb` of this repository. Every number below comes from a run listed in Section 8; results marked
 **preliminary** use too few episodes for a conclusion and are being extended.*
@@ -35,7 +35,20 @@ choosing roles and lanes by the makespan predicted with the steps-to-go effect m
 four-sphere task on 50/50 test seeds in 150 steps against 248 for the expert (all 50 seeds faster,
 sign test p = 1.8e-15) when the skills are executed by their scripted controllers. With learned
 executors it is as fast but fails more (cloned MLP 30/50, WAM 38/50): the learned climb fails on
-about a quarter of the hand-offs from a roll, a state its training starts never covered.
+about a quarter of the hand-offs from a roll, a state its training starts never covered. Training
+the executors also on skill-chaining data (every skill call of noisy scripted schedules, starting
+from the end states of the preceding skills) closes the gap. The resulting approach, MOSAIC
+(scheduler, steps-to-go effect models and chained WAM executors, fixed on validation seeds before
+any test), meets both pre-registered objectives: on the 50 test seeds it solves 50/50 like the
+expert (McNemar p = 1) in 145 steps against 248 (faster on 50/50, p = 1.8e-15, ×0.59), and on 50
+held-out random courses of one to three steps of random positions and heights, never seen in
+training, it solves 50/50 like the expert in 264 steps against 523 (faster on 50/50,
+p = 1.8e-15, ×0.55), zero-shot, because every skill call is expressed in the frame of its step. This
+first MOSAIC fails under sensor noise, other friction, lower steps and N = 5. With a normalisation
+floor, sensor-noise augmentation and chain data with randomised mass, friction and rise mixed with
+the nominal data, it matches the expert's success and stays about twice as fast on fresh courses
+in seven of nine perturbed conditions; it remains below the expert under 5 mm of noise (42/50
+against 49/50) and with spheres 30 % lighter (28/50 against 50/50).
 
 ## 1. Introduction
 
@@ -424,6 +437,124 @@ states of the roll skill are outside the learned climb's training distribution: 
 problem [24, 25] that the scripted controllers,
 being closed-loop on the true state, do not have.
 
+### 5.8 MOSAIC: chained executors, objectives and an unknown course
+
+Objectives, fixed before the final runs: **O1**, at N = 4 on the test seeds
+200000–200049, a success rate not significantly below the expert's (exact McNemar) and
+significantly fewer steps (sign test); **O2**, zero-shot on an unknown course, with the same
+criteria against the expert on the same courses. Seeds: training 0.., development and every choice
+on validation seeds 300000.. (and validation courses), held-out courses 400000–400049 run once at
+the end. MOSAIC is the scheduler of Section 5.7 with the chained WAM executors below, chosen on the
+validation seeds; the chained cloned MLP is reported as a second executor.
+
+Skill-chaining data (`skills_chain.py`, `segments_to_data`). The scheduler runs with the scripted
+executors, Gaussian noise of standard deviation 0.2 on the executed fx, fy and lift (DART) and the
+scripted controllers as labelers; every executed skill call becomes a skill episode whose start is
+the end state of the preceding skill (100 episodes, seeds 0–99). The cloned MLP 512 and the WAM are
+refit on the two-sphere skill data plus these segments. On the validation seeds both reach 50/50
+(148.6 and 148.4 steps; before: 31/50 and 39/50). Further DAgger rounds, collecting with the
+learned executors and relabelling with the scripts, collapse (MLP 0/50 after one and two rounds,
+WAM 27/50 then 20/50),
+so the round-0 executors are kept (negative result, cause not diagnosed).
+
+Unknown course (`swarm.Course`, `random_course`). A course has one to three steps spanning the
+arena, the first face uniform in [-0.4, 0.5] m, depths between faces in [0.65, 0.85] m, the last
+face at most 1.0 m, rises uniform in [0.12, 0.15] m (above 0.15 m the expert's pull fails); the
+goal is on the top platform. The expert climbs level by level and waits in front of each next face.
+Skill calls carry the frame of their step (face x, floor height, rise, back edge); skill features
+are taken relative to that frame, and a roll on a raised floor is framed as the training
+platform's roll, so skills learned on the single 0.15 m step at x = 0.5 m run on any level without
+data from courses. The scheduler plans and replans one level at a time, from the true state, until
+the swarm waits in front of the next face. Two defects found on training courses were fixed before
+the validation runs: waiting slots clipped by the side walls collided (they now move to the other
+side), and crossing slot rolls deadlocked (a new slot roll swaps targets with a rolling sphere when
+that shortens both paths). After a pull the helper sometimes recoils off the edge, at specific
+rises (0.138 m: once per episode; 0.135 and 0.142 m: never); the scheduler then pulls the fallen
+sphere up again with the nearest free sphere on the platform (pull skill, no new skill). On
+training courses 0–39 the scripted scheduler solves 40/40.
+
+Results (50 seeds each; McNemar on success, sign test on steps over the seeds both solve):
+
+| Controller | Test seeds (O1): success | steps | Held-out courses (O2): success | steps |
+|---|---|---|---|---|
+| Expert | 50/50 [0.93, 1.00] | 248.2 | 50/50 [0.93, 1.00] | 523.4 |
+| Scheduler, scripted skills | 50/50 | 149.9 | 50/50 | 284.6 |
+| **MOSAIC (scheduler, chained WAM)** | **50/50** [0.93, 1.00] | **145.4** | **50/50** [0.93, 1.00] | **264.1** |
+| Scheduler, chained MLP 512 | 50/50 | 145.7 | 50/50 | 263.5 |
+
+O1: MOSAIC against the expert, McNemar 0–0 (p = 1), faster on 50/50 seeds (p = 1.8e-15), steps
+ratio 0.59. O2: McNemar 0–0 (p = 1), faster on 50/50 courses (p = 1.8e-15), steps ratio 0.55; no
+restart on either set. Validation (used for the choices): test-like seeds MOSAIC 50/50 in 148.4
+steps (expert 252.1); validation courses MOSAIC 50/50 in 278.2 (expert 538.7), chained MLP 49/50,
+scheduler with the unchained executors 10/50 (MLP) and 2/50 (WAM). The default single-step
+behaviour is unchanged by the course code (expert 252.1 and scheduler 152.5 steps on the
+validation seeds before and after). On courses the effect models overestimate the makespan
+(predicted 528 steps against 264 real): they were trained on the training step only, and the plan
+ranking, not the absolute value, is what the scheduler uses.
+
+### 5.9 Adaptability and a robust MOSAIC
+
+Step-frame ablation and out-of-distribution conditions (`skills_adapt.py`), on the held-out courses
+400000–400049 with N = 4 unless stated: rises fixed on every step, N = 5 and 6, sphere masses and
+inertias scaled, sliding friction scaled, and Gaussian sensor noise on every observation and on
+the scheduler's state (σ on positions, 2σ on velocities, independent at every step). Without the
+step frame (every call seen in the training step's frame) MOSAIC solves 2/50 (McNemar against
+MOSAIC p = 7e-15), so the frame is what transfers the skills across levels. MOSAIC as in
+Section 5.8 fails where the scripted skills do not: friction ×0.5 0/50 and ×1.5 2/50, rise 0.10 m
+20/50, N = 5 21/50, sensor noise of 0.5 mm to 1 cm 0/50, whereas the scheduler with the scripted
+skills solves 50/50 at friction ×0.5 and ×1.5, mass ×0.7 and rise 0.10 m, and 40–46/50 under noise.
+These are learning failures, not physical limits.
+
+Changes, after a review of the literature on robust imitation:
+- Normalisation floor (`STD_FLOOR` = 0.01): the climb WAM's smallest feature standard deviation was
+  6e-5 (height of the base), so 0.5 mm of noise was an 8-σ input.
+- Sensor-noise augmentation (`SkillWAM.fit(input_noise=0.005)`): Gaussian noise on the history
+  frames, clean targets. DART (Laskey et al., 2017) perturbs the supervisor's actions and so cannot
+  cover sensor noise; domain randomisation of the inputs (Tobin et al., 2017) can.
+- Dynamics randomisation of the chain data (Peng et al., 2018; `perturb_dynamics`): each collection
+  episode scales masses by U(0.7, 1.5) and friction by U(0.5, 1.5) and draws the rise in
+  U(0.10, 0.15) m.
+- Waiting on a floor too short for a lane's queue: climbers wait side by side at the back edge
+  instead of overlapping (scripted scheduler at N = 5: 32/50 → 49/50).
+
+Variants, all chosen by validation success first and then compared on the held-out courses
+400000–400049 (success out of 50):
+
+| Executors (WAM) | val. | nominal | noise 5 mm | fric ×0.5 | fric ×1.5 | mass ×0.7 | mass ×1.5 | rise 0.10 | rise 0.16 | N = 5 | N = 6 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| MOSAIC (5.8) | 50 | 50 | 0 | 0 | 2 | 38 | 43 | 20 | 50 | 21 | 45 |
+| + floor | 50 | 50 | 14 | 37 | – | 37 | – | – | – | – | – |
+| + floor, noise | 50 | 50 | 38 | – | – | – | – | – | – | – | – |
+| + floor, noise, randomised (100 ep.) | 50 | 50 | 30 | 50 | 47 | 31 | 26 | 50 | 41 | 38 | 48 |
+| + floor, noise, randomised (300 ep.) | 49 | 42 | 42 | 38 | 43 | 34 | 50 | 50 | 47 | 40 | 44 |
+| **mix: 100 nominal + 300 randomised** | 50 | 50 | 38 | 50 | 46 | 21 | 50 | 50 | 47 | 48 | 48 |
+
+Randomised data alone costs nominal success (42/50 with 300 episodes); mixing it with the nominal
+chain data keeps it. The mix was selected on these held-out courses, so its numbers above are
+optimistic. It was therefore run once more, with the expert and MOSAIC of Section 5.8, on fresh
+courses 500000–500049 never used before (McNemar on success, sign test on steps over the courses
+both solve):
+
+| Condition | Expert | MOSAIC (5.8) | Robust MOSAIC | vs expert: McNemar p | faster, p, steps ratio | vs MOSAIC (5.8): p |
+|---|---|---|---|---|---|---|
+| nominal | 50 | 50 | 50 | 1 | 50/50, 1.8e-15, 0.54 | 1 |
+| noise 5 mm | 49 | 0 | 42 | 0.039 (8–1) | 40/41, 3.8e-11, 0.57 | 4.5e-13 |
+| friction ×0.5 | 50 | 0 | 50 | 1 | 50/50, 1.8e-15, 0.55 | 1.8e-15 |
+| friction ×1.5 | 50 | 3 | 47 | 0.25 | 47/47, 1.4e-14, 0.55 | 1.1e-13 |
+| mass ×0.7 | 50 | 44 | 28 | 4.8e-7 (22–0) | 16/28, 0.57, 1.04 | 3.1e-5 (worse) |
+| mass ×1.5 | 47 | 44 | 50 | 0.25 | 47/47, 1.4e-14, 0.52 | 0.031 |
+| rise 0.10 m | 50 | 24 | 50 | 1 | 50/50, 1.8e-15, 0.60 | 3.0e-8 |
+| N = 5 | 50 | 41 | 48 | 0.5 | 43/48, 1.4e-8, 0.80 | 0.039 |
+| N = 6 | 48 | 45 | 48 | 1 | 46/46, 2.8e-14, 0.39 | 0.45 |
+
+The robust MOSAIC keeps O1 (test seeds 200000–200049: 50/50 in 146.7 steps, faster on 50/50,
+p = 1.8e-15, ratio 0.59) and the nominal held-out result (50/50, ratio 0.55). It matches the expert's
+success, and is faster, in seven of the nine conditions; it stays below the expert under 5 mm
+noise (42 against 49) and loses to MOSAIC of Section 5.8 at mass ×0.7 (28 against 44). There the
+learned pull, executed on light spheres, sends the helper back off the edge: on 12 courses the
+scheduler issues 108 pulls (rescues) against 42 with the scripted skills. Mass is not observable
+from one state; an executor that infers it from its history (Section 9) is the next step.
+
 ## 6. Negative results and fixed defects
 
 | Attempt | Outcome | Diagnosis |
@@ -441,11 +572,19 @@ being closed-loop on the true state, do not have.
 | WAM frame deltas normalised by the state std | climb 5/10 | near-constant state dimensions dominate the loss; normalise by the deltas' std |
 | Self-imitation labels clipped to [-1, 1] | biased saturated labels (lift is 0 or ±1) | label with the sample before clipping (climb still collapsed: next row) |
 | Self-imitation on temporally ensembled rollouts | climb 50/50 → 0–36/50 | lagged labels; collect without ensembling |
+| DAgger rounds on chained executors | MLP 50/50 → 0/50, WAM 50/50 → 27/50 (validation) | not diagnosed; round 0 (scripted DART chain data) kept |
+| Waiting slots clipped by the side walls | two spheres sent to one slot, roll restarts | slots past a wall move to the other side |
+| Feature normalisation without a floor | sensor noise of 0.5 mm: MOSAIC 0/50 | near-constant features (std 6e-5) amplify noise; floor `STD_FLOOR` (+ noise augmentation: 38/50) |
+| Chain data with randomised dynamics only | nominal 50/50 → 42/50 (300 episodes) | nominal data diluted; mixed with the nominal chain data (50/50) |
+| Randomised mass with a history-free pull | mass ×0.7: 44/50 → 28/50 (fresh courses) | not solved; mass is not observable from one state |
 
 ## 7. Threats to validity and limits
 
 - Simulation only; nothing here says anything about hardware.
-- One environment configuration (N = 4, one step height) for the learning results.
+- The learned skills and effect models come from one step at x = 0.5 m (rises 0.10–0.15 m in the
+  randomised chain data); the effect models were not retrained on courses or randomised dynamics.
+- The robust executors were selected on the held-out courses 400000..; only the fresh courses
+  500000–500049 (Section 5.9) are an unbiased test of that choice. One training seed per variant.
 - Several MPPI and RL results use 10–20 episodes; their intervals are wide (Section 5).
 - The model-comparison table measures the whole-task model out of its training distribution.
 - The skill cost functions are hand-written; their shaping may decide climb/pull success more than
@@ -463,7 +602,7 @@ PyTorch 2.15.0 (CUDA 13.2), NumPy 2.5.5, Gymnasium 1.4.0, PettingZoo 1.27.0; one
 GPU, 6 CPU cores. Environment: `uv sync --extra dev --extra torch`.
 
 Software tests: `uv run ruff check src tests` and `MUJOCO_GL=egl uv run pytest -q --cov` pass
-with 128 tests and 100 % line and branch coverage, including `swarm_rl.py`, `swarm_skills.py`,
+with 142 tests and 100 % line and branch coverage, including `swarm_rl.py`, `swarm_skills.py`,
 `swarm_wam.py` and the `step_height` option (`tests/test_swarm_rl.py`,
 `tests/test_swarm_skills.py`). Tests check interfaces, invariants and that losses decrease; they do
 not reproduce the success rates above.
@@ -485,6 +624,10 @@ author's machine and still need to be parametrised):
 | 5.5 ablations | `skills_wam_ablate.py`, `skills_wam_ablate_stats.py` | same starts (50); training seeds 0–2 |
 | 5.7 scheduler | `skills_s4.py`, `skills_s4_stats.py` | test seeds 200000–200049 |
 | 5.6 self-imitation | `skills_selfimit.py` | rollouts 100000·round (+start); eval as 5.5 |
+| 5.8 chain data | `skills_chain.py` | collection 0–99 (round 0); validation 300000–300049 |
+| 5.8 MOSAIC | `skills_s4.py` (`courses=random`, modes `chain_wam`, `chain_bc512`), `skills_s4_stats.py NAME` | test 200000–200049; courses 300000.. (validation), 400000–400049 (held out) |
+| 5.9 robust executors | `skills_chain.py wam rounds=1 input_noise=0.005` (`tag=_noise`); `dynamics=1 rises=0.10,0.15 episodes=300 tag=_robust300`; `episodes=100 extra=wam_robust300 tag=_mix` | collection 0–299 |
+| 5.9 adaptability | `skills_adapt.py COND [wam=chain_wam_mix seed0=500000 modes=expert,mosaic0,mosaic tag=_confirm]`, `skills_adapt_stats.py _confirm`; `skills_s4.py cuda 50 modes=chain_wam_mix` (O1) | courses 400000–400049; fresh 500000–500049 |
 
 Whole-task pipeline: `uv run python -m modular_sphere.tools.train_swarm` (see `--help`).
 
@@ -493,10 +636,11 @@ Whole-task pipeline: `uv run python -m modular_sphere.tools.train_swarm` (see `-
 1. Replace the 128-unit cloned policy by the 512-unit one as the BC baseline and MPPI proposal;
    rerun the MPPI and self-imitation comparisons against it; self-imitation for roll.
 2. MPPI baseline: oracle-model ablation on climb; 50 episodes per skill.
-3. S4 with learned skills: collect climb and pull data from the end states of the preceding skill
-   (roll then climb, climb then pull) with DART noise, retrain the cloned MLP and the WAM, and rerun
-   the scheduler on the test seeds; then N = 6 (three lanes) and a success term in the effect
-   models.
+3. MOSAIC: adaptation from history for mass (an estimator of mass and friction from the last
+   steps, supervised with the simulator parameters, as in RMA or UP-OSI); a success head on the
+   effect models to rank plans by feasibility as well as makespan (STAP); effect models trained on
+   course data; why DAgger rounds collapse on chained executors (the scripted labeler latches lift
+   on a phase the features do not show, a candidate cause).
 
 ## References
 
@@ -550,3 +694,14 @@ Whole-task pipeline: `uv run python -m modular_sphere.tools.train_swarm` (see `-
 24. G. Konidaris, A. Barto. *Skill Discovery in Continuous Reinforcement Learning Domains using
     Skill Chaining*. NeurIPS 2009.
 25. A. Bagaria, G. Konidaris. *Option Discovery using Deep Skill Chaining*. ICLR 2020.
+26. J. Tobin, R. Fong, A. Ray, J. Schneider, W. Zaremba, P. Abbeel. *Domain Randomization for
+    Transferring Deep Neural Networks from Simulation to the Real World*. IROS 2017.
+    arXiv:1703.06907.
+27. X. B. Peng, M. Andrychowicz, W. Zaremba, P. Abbeel. *Sim-to-Real Transfer of Robotic Control
+    with Dynamics Randomization*. ICRA 2018. arXiv:1710.06537.
+28. A. Kumar, Z. Fu, D. Pathak, J. Malik. *RMA: Rapid Motor Adaptation for Legged Robots*. RSS
+    2021. arXiv:2107.04034.
+29. W. Yu, J. Tan, C. K. Liu, G. Turk. *Preparing for the Unknown: Learning a Universal Policy with
+    Online System Identification* (UP-OSI). RSS 2017. arXiv:1702.02453.
+30. C. Agia, T. Migimatsu, J. Wu, J. Bohg. *STAP: Sequencing Task-Agnostic Policies*. ICRA 2023.
+    arXiv:2210.12250.

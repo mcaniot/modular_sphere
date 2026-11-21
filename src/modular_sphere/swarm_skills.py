@@ -40,6 +40,9 @@ SKILLS = ("roll", "climb", "pull")
 MAX_SKILL_STEPS = 200  # 10 s: a skill that has not ended by then failed
 ROLL_TOL = 0.03  # roll ends within this distance of the target [m] ...
 ROLL_SPEED = 0.05  # ... below this speed [m/s]
+# floor of the feature normalisation: a near-constant feature (a sphere's height on the floor)
+# must not turn millimetre sensor noise into many standard deviations [m, m/s, rad/s]
+STD_FLOOR = 0.01
 
 
 def place(env: SphereSwarmStepEnv, pos: Array) -> None:
@@ -56,11 +59,19 @@ def place(env: SphereSwarmStepEnv, pos: Array) -> None:
 @dataclass
 class SkillCall:
     """One skill applied to spheres ``agents`` (roll: ``(i,)``; climb: ``(c, b)``; pull: ``(h, b)``)
-    with an xy ``target`` (roll target; climb/pull: the line ``y`` of the base in ``target[1]``)."""
+    with an xy ``target`` (roll target; climb/pull: the line ``y`` of the base in ``target[1]``).
+
+    The step frame (``face`` x, ``floor`` height in front of it, its ``rise``, and ``back``, the x
+    where the current floor starts) defaults to the single step of the training task; skill
+    features are relative to it, so skills transfer to the steps of a ``Course``."""
 
     name: str
     agents: tuple[int, ...]
     target: Array
+    face: float = STEP_X
+    floor: float = 0.0
+    rise: float = STEP_H
+    back: float = -np.inf
 
 
 class SkillController:
@@ -72,9 +83,11 @@ class SkillController:
         self.sl = self.ex.slices
         self.lifting = False
         y = float(call.target[1])
-        self.base_xy = np.array([STEP_X - radius - 0.01, y])
+        self.base_xy = np.array([call.face - radius - 0.01, y])
         self.climb_xy = self.base_xy - (2 * radius + 0.03, 0.0)
-        self.edge_xy = np.array([self.ex.EDGE_X, y])
+        self.edge_xy = np.array([call.face + self.ex.EDGE_X - STEP_X, y])
+        stage_x = max(self.climb_xy[0] - self.ex.STAGE, call.back + radius + 0.05)
+        self.stage_xy = np.array([stage_x, y])
 
     def done(self, pos: Array, vel: Array) -> bool:
         """Termination event from the true sphere positions and velocities (N, 3)."""
@@ -84,7 +97,7 @@ class SkillController:
             near = np.linalg.norm(pos[i, :2] - self.call.target) < ROLL_TOL
             return bool(near and np.linalg.norm(vel[i, :2]) < ROLL_SPEED)
         if name == "climb":
-            return bool(pos[ag[0], 2] > 3 * self.r - self.ex.TOP_MARGIN)
+            return bool(pos[ag[0], 2] > self.call.floor + 3 * self.r - self.ex.TOP_MARGIN)
         h, b = ag
         return bool(pos[b, 2] > pos[h, 2] + self.r and pos[b, 0] > pos[h, 0] - 0.05)
 
@@ -100,7 +113,7 @@ class SkillController:
             oc, ob = obs[c], obs[b]
             if not self.lifting:
                 base_ready = np.linalg.norm(ob[:2] - self.base_xy) < ex.ALIGN_TOL
-                slot = self.climb_xy if base_ready else self.climb_xy - (ex.STAGE, 0.0)
+                slot = self.climb_xy if base_ready else self.stage_xy
                 out[b][:2] = ex._track(ob, self.base_xy)
                 out[c][:2] = ex._track(oc, slot)
                 ready = base_ready and np.linalg.norm(oc[:2] - self.climb_xy) < ex.ALIGN_TOL
@@ -158,30 +171,31 @@ def sample_start(name: str, rng: np.random.Generator, radius: float = 0.1) -> tu
 
 def skill_cost(call: SkillCall, x: torch.Tensor, radius: float = 0.1) -> torch.Tensor:
     """Cost of predicted sphere states ``x`` (..., N, 9) for a skill call (lower is better)."""
-    ag, y = call.agents, float(call.target[1])
+    ag, y, fx, z0 = call.agents, float(call.target[1]), call.face, call.floor
     pos, vel = x[..., :3], x[..., 3:6]
-    face = torch.tensor([STEP_X - radius - 0.01, y], dtype=x.dtype, device=x.device)
+    face = torch.tensor([fx - radius - 0.01, y], dtype=x.dtype, device=x.device)
     if call.name == "roll":
         tgt = torch.as_tensor(call.target, dtype=x.dtype, device=x.device)
         i = ag[0]
         return (pos[..., i, :2] - tgt).norm(dim=-1) + 0.1 * vel[..., i, :2].norm(dim=-1)
     if call.name == "climb":
         c, b = ag
-        top = torch.tensor([STEP_X + 0.05, y, 3 * radius], dtype=x.dtype, device=x.device)
+        top = torch.tensor([fx + 0.05, y, z0 + 3 * radius], dtype=x.dtype, device=x.device)
         return (pos[..., c, :] - top).norm(dim=-1) + (pos[..., b, :2] - face).norm(dim=-1)
     h, b = ag
-    up = torch.tensor([STEP_X + 0.15, y, STEP_H + radius], dtype=x.dtype, device=x.device)
-    edge = torch.tensor([STEP_X + 0.035, y], dtype=x.dtype, device=x.device)
+    up = torch.tensor([fx + 0.15, y, z0 + call.rise + radius], dtype=x.dtype, device=x.device)
+    edge = torch.tensor([fx + 0.035, y], dtype=x.dtype, device=x.device)
     return (pos[..., b, :] - up).norm(dim=-1) + (pos[..., h, :2] - edge).norm(dim=-1)
 
 
 def skill_features(call: SkillCall, x: torch.Tensor, links: torch.Tensor) -> torch.Tensor:
-    """Target-relative state of the involved spheres (..., F) from states (..., N, 9), links."""
+    """Target-relative state of the involved spheres (..., F) from states (..., N, 9), links;
+    heights are relative to the call's floor."""
     ag = list(call.agents)
     if call.name == "roll":
-        ref = (float(call.target[0]), float(call.target[1]), 0.0)
+        ref = (float(call.target[0]), float(call.target[1]), call.floor)
     else:
-        ref = (STEP_X, float(call.target[1]), 0.0)
+        ref = (call.face, float(call.target[1]), call.floor)
     ref_t = torch.tensor([*ref, *([0.0] * 6)], dtype=x.dtype, device=x.device)
     feats = [(x[..., ag, :] - ref_t).flatten(-2)]
     if len(ag) == 2:
@@ -216,7 +230,7 @@ class _SkillNet(torch.nn.Module):
              seed: int) -> list[float]:  # fmt: skip
         torch.manual_seed(seed)
         self.mean.copy_(f.mean(0))
-        self.std.copy_(f.std(0) + 1e-6)
+        self.std.copy_(f.std(0).clamp(min=STD_FLOOR))
         optim = torch.optim.AdamW(self.net.parameters(), lr=lr, weight_decay=1e-5)
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=epochs)
         gen = torch.Generator(device="cpu").manual_seed(seed)

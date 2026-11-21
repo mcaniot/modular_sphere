@@ -8,11 +8,13 @@ from modular_sphere.swarm import (
     STEP_H,
     STEP_X,
     WALL_H,
+    Course,
     SphereSwarmStepEnv,
     SwarmClimbPolicy,
     gather_radius,
     obs_slices,
     parallel_env,
+    random_course,
 )
 
 
@@ -132,6 +134,46 @@ def test_scripted_swarm_climbs_the_step(n, seed):
     for o in obs.values():  # every sphere is on the platform, inside the gathering zone
         assert o[0] > STEP_X and o[2] > STEP_H + env.radius / 2
         assert np.linalg.norm(o[9:11]) <= gather_radius(n)
+
+
+def test_courses_are_validated_and_random_courses_stay_in_bounds():
+    for faces, rises in (((), ()), ((0.5,), (0.1, 0.1)), ((0.5, 0.2), (0.1, 0.1)), ((0.5,), (0,))):
+        with pytest.raises(ValueError, match="course"):
+            Course(faces, rises)
+    c = Course((-0.3, 0.5), (0.12, 0.14))
+    assert c.floor(0) == 0 and c.floor(1) == 0.12 and np.isclose(c.top, 0.26)
+    sizes = set()
+    for seed in range(30):
+        c = random_course(np.random.default_rng(seed))
+        sizes.add(len(c.faces))
+        assert -0.4 <= c.faces[0] and c.faces[-1] <= 1.0
+        assert all(0.12 <= h <= 0.15 for h in c.rises)
+        assert all(0.649 <= d <= 0.851 for d in np.diff(c.faces))
+    assert sizes == {1, 2, 3}
+    assert random_course(np.random.default_rng(3)) == random_course(np.random.default_rng(3))
+
+
+def test_scripted_swarm_climbs_a_three_step_course():
+    course = random_course(np.random.default_rng(0))
+    assert len(course.faces) == 3
+    env = SphereSwarmStepEnv(n_spheres=4, course=course)
+    assert env.step_height == course.top and env.max_steps == 3 * SphereSwarmStepEnv().max_steps
+    policy = SwarmClimbPolicy(4, env.radius, course)
+    obs, _ = env.reset(seed=0)
+    assert env.goal[0] >= course.faces[-1] + 0.45
+    while env.agents:
+        obs, _, _, _, infos = env.step(policy.act(obs))
+    assert infos["sphere_0"]["is_success"] and policy._level == 2
+    for o in obs.values():
+        assert o[0] > course.faces[-1] and o[2] > course.top + env.radius / 2
+
+
+def test_waiting_slots_stay_inside_the_walls_and_apart():
+    policy = SwarmClimbPolicy(4, 0.1)
+    for y in (-1.6, 0.0, 1.6):
+        ys = sorted(s[1] for s in policy._wait_slots(0.5, y))
+        assert len(ys) == 4 and min(np.diff(ys)) >= 0.3 - 1e-9 and max(map(abs, ys)) <= 1.7
+        assert all(s[0] == 0.5 - policy.WAIT_X for s in policy._wait_slots(0.5, y))
 
 
 def test_success_needs_every_sphere_in_the_zone():

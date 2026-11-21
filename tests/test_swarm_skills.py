@@ -8,6 +8,7 @@ torch = pytest.importorskip("torch")
 from modular_sphere.swarm_skills import (  # noqa: E402
     MAX_SKILL_STEPS,
     SKILLS,
+    STD_FLOOR,
     SkillCall,
     SkillController,
     SkillPlanner,
@@ -93,6 +94,7 @@ def test_prior_value_and_planner(climb, tmp_path):
     prior, value = SkillPrior(2, hidden=32), SkillValue(2, hidden=32)
     losses = prior.fit(climb.data, calls, epochs=3)
     assert losses[-1] < losses[0]
+    assert prior.std.min() >= STD_FLOOR
     value.fit(climb.data, calls, epochs=3)
     prior.save(str(tmp_path / "p.pt"))
     value.save(str(tmp_path / "v.pt"))
@@ -126,6 +128,9 @@ def test_wam_fit_control_rollout_and_elite(climb, tmp_path):
     wam = SkillWAM(2, history=2, chunk=3, width=32, layers=1, heads=2)
     losses = wam.fit(climb.data, calls, epochs=3, batch_size=64)
     assert losses[-1] < losses[0]
+    assert wam.feat_std.min() >= STD_FLOOR and wam.delta_std.min() >= STD_FLOOR / 10
+    noisy = SkillWAM(2, history=2, chunk=3, width=32, layers=1, heads=2)
+    assert np.isfinite(noisy.fit(climb.data, calls, epochs=1, input_noise=0.01)).all()
     frames, acts = wam(torch.zeros(5, 2, wam.dim))
     assert frames.shape == (5, 3, wam.dim) and acts.shape == (5, 3, 2, 4)
     mean = wam.feat_mean.clone()

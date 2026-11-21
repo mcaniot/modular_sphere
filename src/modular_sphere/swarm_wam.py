@@ -24,6 +24,7 @@ from modular_sphere.swarm import ACT_DIM, SphereSwarmStepEnv
 from modular_sphere.swarm_data import SwarmDataset
 from modular_sphere.swarm_skills import (
     MAX_SKILL_STEPS,
+    STD_FLOOR,
     SkillCall,
     SkillController,
     place,
@@ -103,16 +104,22 @@ class SkillWAM(nn.Module):
 
     def fit(self, data: SwarmDataset, calls: list[SkillCall], epochs: int = 60,
             lr: float = 3e-4, batch_size: int = 512, frame_weight: float = 1.0,
-            seed: int = 0, keep_stats: bool = False) -> list[float]:  # fmt: skip
+            seed: int = 0, keep_stats: bool = False, input_noise: float = 0.0
+            ) -> list[float]:  # fmt: skip
         """Joint loss on future frames and action chunks (labels: ``data.expert``); ``calls[e]``
-        is episode ``e``'s call. ``keep_stats`` keeps the normalisation (fine-tuning)."""
+        is episode ``e``'s call. ``keep_stats`` keeps the normalisation (fine-tuning).
+        ``input_noise`` [m] adds Gaussian sensor noise to the history frames (positions, twice
+        that on velocities, none on links) while the targets stay clean."""
         torch.manual_seed(seed)
         dev = self.feat_mean.device
         hist, fut, act, mask = self._windows(data, calls, dev)
         if not keep_stats:
             self.feat_mean.copy_(hist[:, -1].mean(0))
-            self.feat_std.copy_(hist[:, -1].std(0) + 1e-6)
-            self.delta_std.copy_((fut - hist[:, -1:]).flatten(0, 1).std(0) + 1e-6)
+            self.feat_std.copy_(hist[:, -1].std(0).clamp(min=STD_FLOOR))
+            delta = (fut - hist[:, -1:]).flatten(0, 1).std(0)
+            self.delta_std.copy_(delta.clamp(min=STD_FLOOR / 10))  # per-step deltas are smaller
+        scale = torch.tensor([1.0] * 3 + [2.0] * 6, device=dev).repeat(self.n_agents)
+        scale = input_noise * nn.functional.pad(scale, (0, self.dim - scale.numel()))
         optim = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=1e-4)
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=epochs)
         gen = torch.Generator(device="cpu").manual_seed(seed)
@@ -120,7 +127,9 @@ class SkillWAM(nn.Module):
         for _ in range(epochs):
             total = 0.0
             for idx in torch.randperm(hist.shape[0], generator=gen).to(dev).split(batch_size):
-                loss = self.loss(hist[idx], fut[idx], act[idx], mask[idx], frame_weight)
+                h = hist[idx]
+                noisy = h + scale * torch.randn_like(h)
+                loss = self.loss(noisy, fut[idx], act[idx], mask[idx], frame_weight, h[:, -1:])
                 optim.zero_grad(set_to_none=True)
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.parameters(), 1.0)
@@ -131,9 +140,12 @@ class SkillWAM(nn.Module):
         return losses
 
     def loss(self, hist: torch.Tensor, fut: torch.Tensor, act: torch.Tensor, mask: torch.Tensor,
-             frame_weight: float = 1.0) -> torch.Tensor:  # fmt: skip
+             frame_weight: float = 1.0, last: torch.Tensor | None = None
+             ) -> torch.Tensor:  # fmt: skip
+        """``last``: clean last history frame the future deltas are taken from (default:
+        ``hist[:, -1:]``)."""
         frames, out = self(hist)
-        target = (fut - hist[:, -1:]) / self.delta_std
+        target = (fut - (hist[:, -1:] if last is None else last)) / self.delta_std
         frame_loss = ((frames - target) ** 2).mean()
         mse = ((out[..., :3] - act[..., :3]) ** 2).mean(-1)
         bce = nn.functional.binary_cross_entropy_with_logits(
