@@ -25,7 +25,10 @@ solves roll (10/10) but at best 6/10 on climb and 9/10 on pull (**preliminary**)
 cloned proposal and a learned steps-to-go cost. A small world-action model per skill, after
 GR00T 2, that jointly predicts the next 10 skill frames and a 10-step action chunk from a 4-frame
 history solves climb on 50/50 paired starts against 27/50 for the cloned policy (McNemar
-p = 2.4e-7) and matches it on pull and roll. Group-relative self-imitation in MuJoCo shortens pull
+p = 2.4e-7) and matches it on pull and roll. Ablations show that this gain comes from capacity, not
+from the world-action ingredients: without history, chunking and frame prediction the same
+transformer still solves 50/50 (three training seeds), and a cloned MLP widened from 128 to 512
+units solves 49–50/50, whereas the 128-unit MLP stays at 24–26/50. Group-relative self-imitation in MuJoCo shortens pull
 by 9 % but collapses climb when rollouts are executed with temporal ensembling, whose lag the
 model learns back. The end goal is a planner that composes the skills in parallel over sphere subsets with learned skill
 effect models, which to our knowledge has not been published in this form.
@@ -304,14 +307,37 @@ steps over the starts both controllers solve):
 | roll | 50/50 [0.93, 1.00], 57.8 steps | 48/50 [0.86, 1.00], 57.9 steps | 48/50 [0.86, 1.00], 56.4 steps |
 | roll vs BC | | 0–2, p = 0.5 | 0–2, p = 0.5 |
 
-The WAM is the only learned controller that solves climb reliably (50/50 against 27/50 for BC,
-p = 2.4e-7), at a cost of 3.6 steps without ensembling. On pull and roll it does not differ
-significantly from BC; on pull, ensembling loses 11 starts (p = 0.001 against both BC and the WAM
-without ensembling). The roll WAM predicts its future frames well (6 mm one step ahead, 21 mm ten
-steps ahead), since a single rolling sphere is easy to predict. Two mechanisms plausibly
-explain it, without an ablation yet to separate them: the history window resolves the controller's
-hidden phase (it starts lifting only after both spheres are aligned *and* slow, a latch that a
-memoryless policy cannot see), and chunking commits to a phase for 0.5 s. The predicted frames are
+The WAM solves climb reliably where the cloned MLP does not (50/50 against 27/50, p = 2.4e-7), at a
+cost of 3.6 steps without ensembling. On pull and roll it does not differ significantly from BC; on
+pull, ensembling loses 11 starts (p = 0.001 against both BC and the WAM without ensembling). The
+roll WAM predicts its future frames well (6 mm one step ahead, 21 mm ten steps ahead), since a
+single rolling sphere is easy to predict.
+
+**Ablations (`skills_wam_ablate.py`).** We expected the history window (the controller's lift
+phase latches only once both spheres are aligned *and* slow) or chunking to explain the climb gain.
+Each variant is retrained from scratch and executed without ensembling on the same 50 starts;
+McNemar is against the full WAM (50/50) and the BC of the table above (27/50):
+
+| Climb variant | Seeds | Success | Steps | vs WAM | vs BC |
+|---|---|---|---|---|---|
+| full WAM, training seed 1 | 1 | 50/50 | 50.2 | 0–0 | 23–0, p = 2.4e-7 |
+| no history (1 frame) | 0 | 50/50 | 48.3 | 0–0 | 23–0, p = 2.4e-7 |
+| no chunk (1 action, 1 frame) | 0 | 50/50 | 50.8 | 0–0 | 23–0, p = 2.4e-7 |
+| no frame loss | 0 | 50/50 | 49.9 | 0–0 | 23–0, p = 2.4e-7 |
+| none of the three (transformer BC on one frame) | 0, 1, 2 | 50, 50, 50/50 | 50.2–50.9 | 0–0 | 23–0, p = 2.4e-7 |
+| MLP 128, 30 epochs, lr 1e-3, batch 1024 | 0, 1, 2 | 24, 26, 24/50 | 46.6–48.4 | 0–24 to 0–26, p ≤ 1.2e-7 | n.s. |
+| MLP 128, WAM recipe (60 epochs, lr 3e-4, batch 512) | 0 | 25/50 | 48.4 | 0–25, p = 6e-8 | 0–2, p = 0.5 |
+| **MLP 512, WAM recipe** | 0, 1, 2 | 49, 50, 49/50 | 48.8–49.4 | 0–1 or 0–0 | 23–1 or 23–0, p ≤ 3e-6 |
+
+No world-action ingredient matters for climb: a transformer that sees one frame, predicts one
+action and no frame solves it as well as the full WAM. The training recipe does not matter either
+(MLP 128 with the WAM's epochs and learning rate: 25/50). Width does: the 128-unit MLP underfits
+(training loss 0.10 against 0.08 for 512 units and 0.03 for the transformer), and the 512-unit MLP
+recovers 49–50/50 on three seeds. Pull confirms it: the 128-unit MLP trained 30 epochs solves 17/50,
+whereas the 40-epoch one of the table above solves 50/50; the 512-unit MLP and the bare transformer
+both solve 50/50 (61.0 and 61.7 steps), so the WAM's 7-step gain on pull is also matched without its
+ingredients. The cloned policy of Sections 5.4–5.5 was therefore an underfitted baseline, and the
+climb and pull results credited to the WAM above are a capacity effect. The predicted frames are
 coarse (validation position error 30 mm one step ahead and 87 mm ten steps ahead for climb; 19 and
 59 mm for pull) compared with the dedicated skill world model (0.5 mm one step ahead), so in this
 model the future frames act as an auxiliary target that shapes the representation rather than as an
@@ -378,6 +404,9 @@ stable (50/50).
 - The skill cost functions are hand-written; their shaping may decide climb/pull success more than
   the model accuracy. An ablation with the true simulator as the model (oracle MPPI) is needed to
   separate planning failures from model errors.
+- The cloned proposal of every MPPI variant (Section 5.4) is the underfitted 128-unit MLP of
+  Section 5.5; the MPPI climb results must be rerun with a wider prior before any conclusion on
+  planning.
 - Novelty claims rest on abstracts of related work.
 
 ## 8. Reproducibility
@@ -406,14 +435,15 @@ author's machine and still need to be parametrised):
 | 5.4 skill models | `skills_s2.py` | train 0, 1000, 2000 (+episode); val 90000 |
 | 5.4 MPPI | `skills_s3.py`, `skills_prior.py` | episodes 0–9, start sampler seed 123 |
 | 5.5 WAM | `skills_wam.py`, `skills_wam_stats.py` | same starts (10 or 50 episodes) |
+| 5.5 ablations | `skills_wam_ablate.py`, `skills_wam_ablate_stats.py` | same starts (50); training seeds 0–2 |
 | 5.6 self-imitation | `skills_selfimit.py` | rollouts 100000·round (+start); eval as 5.5 |
 
 Whole-task pipeline: `uv run python -m modular_sphere.tools.train_swarm` (see `--help`).
 
 ## 9. Next steps
 
-1. WAM: ablations (no history, no chunking, no
-   frame loss) to tell which part solves climb; self-imitation for roll.
+1. Replace the 128-unit cloned policy by the 512-unit one as the BC baseline and MPPI proposal;
+   rerun the MPPI and self-imitation comparisons against it; self-imitation for roll.
 2. MPPI baseline: oracle-model ablation on climb; 50 episodes per skill.
 3. S4: skill effect models (start → duration, success) as in [15]; a planner that assigns roles
    and schedules skills in parallel over sphere subsets (for example two climbs at once), replanning
