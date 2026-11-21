@@ -8,7 +8,7 @@ import torch
 
 from modular_sphere.swarm import SphereSwarmStepEnv
 from modular_sphere.swarm_skills import (
-    MAX_SKILL_STEPS, SKILLS, SkillCall, SkillController, SkillPlanner, SkillPrior, place,
+    MAX_SKILL_STEPS, SKILLS, SkillCall, SkillController, SkillPlanner, SkillPrior, SkillValue, place,
     sample_start, skill_features,
 )
 from modular_sphere.swarm_torch import SwarmWorldModel
@@ -19,7 +19,7 @@ for k in ("horizon", "samples", "iterations"):
     if k in kw:
         kw[k] = int(kw[k])
 skills = [kw.pop("skill")] if "skill" in kw else SKILLS
-mode = {0: "mppi", 1: "prior", 2: "bc"}[int(kw.pop("mode", 0))]
+mode = {0: "mppi", 1: "prior", 2: "bc", 3: "value", 4: "value+prior"}[int(kw.pop("mode", 0))]
 root = "/home/mcaniot/Documents/modular_sphere/data/swarm/skills"
 for name in skills:
     if isinstance(name, float):
@@ -29,6 +29,7 @@ for name in skills:
     env = SphereSwarmStepEnv(n_spheres=2, max_steps=MAX_SKILL_STEPS + 1)
     ag = (0,) if name == "roll" else (0, 1)
     prior = SkillPrior.load(f"{root}/prior_{name}.pt", device) if mode != "mppi" else None
+    value = SkillValue.load(f"{root}/value_{name}.pt", device) if "value" in mode else None
     res, t0 = [], time.time()
     for e in range(n_eps):
         env.reset(seed=e)
@@ -37,7 +38,8 @@ for name in skills:
         env.data.mocap_pos[env._goal_mocap][:2] = (10.0, 10.0)
         call = SkillCall(name, ag, target)
         judge = SkillController(call, 2, env.radius)
-        planner = SkillPlanner(wm, call, 2, seed=e, prior=prior if mode == "prior" else None, **kw)
+        planner = SkillPlanner(wm, call, 2, seed=e, prior=prior if "prior" in mode else None,
+                               value=value, **kw)
         ok = False
         for t in range(MAX_SKILL_STEPS):
             pos, vel, ang = env._kinematics()

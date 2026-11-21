@@ -10,6 +10,12 @@ All notable changes to this project are documented here. The format follows
 
 - Working paper `docs/paper/skill_world_models.md` (methods, results with confidence intervals and
   paired tests, negative results, verified references) and its experiment scripts.
+- `swarm_skills`: `skill_features`, a cloned skill policy `SkillPrior`, a learned steps-to-go
+  `SkillValue`, and `SkillPlanner` options to sample around the prior and to use the value as cost.
+- `swarm_wam`: per-skill world-action model `SkillWAM` (joint prediction of future skill frames
+  and an action chunk), `WAMController` with optional temporal ensembling, and group-relative
+  self-imitation helpers `rollout_skill`, `select_elite`.
+- Tests for `swarm_rl`, `swarm_skills`, `swarm_wam` and the `step_height` option.
 - `modular_sphere.swarm.SphereSwarmStepEnv`: first 3D multi-agent task (PettingZoo
   `ParallelEnv`). The whole swarm of N spheres must climb a step higher than the sphere radius
   and gather on the platform, using distance-preserving links between spheres and an internal

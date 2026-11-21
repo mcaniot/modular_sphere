@@ -20,10 +20,14 @@ scratch with a step-height curriculum, does not discover a parallel strategy: th
 at 0.06 m, the highest step a lone sphere can climb. We then decompose the task into three skills
 (roll, climb, pull), each with its own small world model trained only on its two-sphere data. These
 skill models are 1.6 to 18 times more accurate at 30 steps than the whole-task model on the same
-skill data. When the skill model chooses the actions through model-predictive path integral
-control (MPPI), it solves roll (10/10) but not yet climb (3/10) or pull (0/10) (**preliminary**);
-adding a cloned skill policy as a proposal distribution, as in TD-MPC2, is under evaluation. The
-end goal is a planner that composes the skills in parallel over sphere subsets with learned skill
+skill data. Planning with these models through model-predictive path integral control (MPPI)
+solves roll (10/10) but at best 6/10 on climb and 9/10 on pull (**preliminary**), even with a
+cloned proposal and a learned steps-to-go cost. A small world-action model per skill, after
+GR00T 2, that jointly predicts the next 10 skill frames and a 10-step action chunk from a 4-frame
+history solves climb on 50/50 paired starts against 27/50 for the cloned policy (McNemar
+p = 2.4e-7) and matches it on pull and roll. Group-relative self-imitation in MuJoCo shortens pull
+by 9 % but collapses climb when rollouts are executed with temporal ensembling, whose lag the
+model learns back. The end goal is a planner that composes the skills in parallel over sphere subsets with learned skill
 effect models, which to our knowledge has not been published in this form.
 
 ## 1. Introduction
@@ -45,6 +49,8 @@ Contributions of this draft:
    on model-free MAPPO for this task (Sections 4–6).
 3. A skill decomposition with one small world model per skill, measured against the whole-task
    model, and MPPI planning in these models (Section 5.4, partly preliminary).
+4. A per-skill world-action model with paired evaluation, and a negative result on self-imitation
+   from temporally ensembled rollouts (Sections 5.5–5.6).
 
 ## 2. Related work
 
@@ -245,6 +251,9 @@ whose payoff lies beyond a 15-step horizon under a distance cost. Follow-up runs
 | same, temperature 0.01 | 6/10 (75 steps) | 0/10 |
 | Behaviour-cloned skill policy alone (no model) | 6/10 (48 steps) | 10/10 (74 steps) |
 | MPPI with the cloned policy as proposal (25 % of samples) | 0/10 | 0/10 |
+| MPPI, learned steps-to-go cost, temperature 0.05 / 0.5 | 0/10, 0/10 | 0/10, 0/10 |
+| MPPI, learned steps-to-go cost + cloned proposal, temperature 0.05 | 0/10 | 6/10 (66 steps) |
+| same, temperature 0.5 | 0/10 | 9/10 (79 steps), CI [0.55, 1.00] |
 
 The cloned policy alone solves pull, but MPPI rejects its samples when they are ranked by the
 hand-written distance cost: **the cost, not the model, is the main failure** of this stage. This
@@ -252,7 +261,95 @@ motivates replacing the hand-written cost by a learned *steps-to-go* value of th
 (`SkillValue`, Monte Carlo targets from the skill data, failures counted as 200 steps), which is
 both the planner's terminal value as in TD-MPC [9] and the duration part of a skill effect model as
 in [15]. Validation error of the steps-to-go prediction (MAE / RMSE): roll 14.8 / 43.7, climb
-2.3 / 3.0, pull 7.0 / 8.5 steps. MPPI with this value is being evaluated.
+2.3 / 3.0, pull 7.0 / 8.5 steps. With this value and the cloned proposal, the skill model now
+chooses actions that solve pull in 9/10 episodes, against 0/10 with the hand-written cost. The
+value alone (Gaussian samples only) fails on both skills: the proposal is needed to reach the
+states where the value is informative. Climb still fails in every model-based variant although the
+value is accurate on the data (MAE 2.3 steps); the next check is an oracle ablation (the simulator
+instead of the skill model) to tell a model error in the link-and-lift phase from a planning
+error.
+
+### 5.5 Small world-action model per skill
+
+Method (`swarm_wam.py`). Following the world-action models of GR00T 2 [20] and Cosmos Policy [21],
+one network per skill predicts **jointly** the future of the scene and the chunk of actions that
+produces it, and the action tokens attend to the predicted future frames. At our scale the "scene"
+is the target-relative state of the involved spheres (`skill_features`), not video. A transformer
+(width 128, 3 layers, 4 heads) reads the last 4 frames (0.2 s) and outputs the next 10 frames
+(as deltas from the last frame, normalised by their standard deviation) and 10 actions (0.5 s),
+with ACT-style action chunking [22]. Loss: action MSE on fx, fy, lift + BCE on attach + frame MSE
+(weight 1), trained 60 epochs on each skill's expert data. Execution re-predicts a chunk at every
+step and runs its first action, or averages the chunks' predictions for the current step with
+ACT's temporal ensembling (weight `exp(-0.1 i)`, `i = 0` for the oldest chunk). Deviations from
+GR00T 2: deterministic regression instead of flow matching, state tokens instead of video latents,
+one small model per skill.
+
+Results (MuJoCo, same starts as Section 5.4; **preliminary** at 10 episodes):
+
+| Skill | Cloned policy (BC) | Best MPPI variant | WAM | WAM + temporal ensembling |
+|---|---|---|---|---|
+| climb, 10 episodes | 6/10 (48 steps) | 6/10 (75 steps) | **10/10** (52 steps) | **10/10** (50 steps) |
+| pull, 10 episodes | 10/10 (74 steps) | 9/10 (79 steps) | **10/10** (66 steps) | 8/10 (87 steps) |
+
+Paired comparison on 50 starts per skill (same env seeds 0–49 and start sampler seed 123 for every
+controller; 95 % Clopper–Pearson intervals; exact McNemar on success against BC; sign test on
+steps over the starts both controllers solve):
+
+| Skill | BC | WAM | WAM + temporal ensembling |
+|---|---|---|---|
+| climb | 27/50 [0.39, 0.68], 48.3 steps | **50/50** [0.93, 1.00], 51.0 steps | **50/50** [0.93, 1.00], 47.9 steps |
+| climb vs BC | | 23–0, p = 2.4e-7; slower on 24/27, p = 5e-5 (+3.6 steps) | 23–0, p = 2.4e-7; 12 faster, 12 slower |
+| pull | 50/50 [0.93, 1.00], 74.0 steps | 50/50 [0.93, 1.00], **66.9 steps** | 39/50 [0.64, 0.88], 71.1 steps |
+| pull vs BC | | 0–0; faster on 31/50, p = 0.12 (−7.1 steps) | 0–11, p = 0.001 |
+| roll | 50/50 [0.93, 1.00], 57.8 steps | 48/50 [0.86, 1.00], 57.9 steps | 48/50 [0.86, 1.00], 56.4 steps |
+| roll vs BC | | 0–2, p = 0.5 | 0–2, p = 0.5 |
+
+The WAM is the only learned controller that solves climb reliably (50/50 against 27/50 for BC,
+p = 2.4e-7), at a cost of 3.6 steps without ensembling. On pull and roll it does not differ
+significantly from BC; on pull, ensembling loses 11 starts (p = 0.001 against both BC and the WAM
+without ensembling). The roll WAM predicts its future frames well (6 mm one step ahead, 21 mm ten
+steps ahead), since a single rolling sphere is easy to predict. Two mechanisms plausibly
+explain it, without an ablation yet to separate them: the history window resolves the controller's
+hidden phase (it starts lifting only after both spheres are aligned *and* slow, a latch that a
+memoryless policy cannot see), and chunking commits to a phase for 0.5 s. The predicted frames are
+coarse (validation position error 30 mm one step ahead and 87 mm ten steps ahead for climb; 19 and
+59 mm for pull) compared with the dedicated skill world model (0.5 mm one step ahead), so in this
+model the future frames act as an auxiliary target that shapes the representation rather than as an
+accurate simulator. A first version that normalised the frame deltas by the state's standard
+deviation instead of the deltas' gave 5/10 (8/10 with ensembling) on climb.
+
+### 5.6 Group-relative self-imitation in MuJoCo
+
+Method (`rollout_skill`, `select_elite`). GR00T 2 [20] post-trains its WAM with GRPO [23] and
+"GRPO-induced self-imitation", fine-tuning on its own successful rollouts. We use the second, which
+needs no likelihood of the chunked policy: per round, 8 rollouts with Gaussian noise (σ = 0.2 on
+fx, fy, lift) from each of 40 sampled starts; per start, keep the successful rollouts at least as
+fast as the group's mean successful duration (non-negative group-relative advantage under the
+reward success − time); fine-tune 15 epochs (learning rate 1e-4, normalisation frozen) on these
+rollouts mixed with the expert data; evaluate deterministically on 50 fixed starts. RL runs in
+MuJoCo, not in the world model: the simulator costs nothing here, unlike the real robot of [20].
+
+| Skill, execution | Round 0 | Round 1 | Round 2 | Round 3 |
+|---|---|---|---|---|
+| pull, no ensembling (labels clipped, see below) | 50/50, 66.9 steps | 50/50, 64.5 | 50/50, 60.6 | 50/50, 60.6 |
+| climb, ensembling, σ = 0.2 | 50/50, 47.9 | 1/50 | 29/50 | 36/50 |
+| climb, ensembling, σ = 0.1 | 50/50, 47.9 | 0/50 | 50/50 (no elite: expert data only) | 5/50 |
+| climb, ensembling, σ = 0, all 150 rollouts | 50/50, 47.9 | 23/50 | | |
+| climb, no ensembling, σ = 0, all 150 rollouts | 50/50, 51.0 | 50/50, 50.3 | | |
+| **climb, no ensembling, σ = 0.2** | 50/50, 51.0 | 50/50, 49.9 | 49/50, 50.2 | 50/50, 50.1 |
+| **climb, no ensembling, σ = 0.1** | 50/50, 51.0 | 50/50, 50.3 | 50/50, 50.0 | 49/50, 50.3 |
+| **pull, no ensembling, σ = 0.2** | 50/50, 66.9 | 50/50, 64.0 | 50/50, 61.9 | 50/50, 60.7 |
+
+Without ensembling (bold rows, labels before clipping), self-imitation is stable on both skills.
+On pull it keeps every success and shortens the skill by 9 % (66.9 → 60.7 steps; round 3 faster
+than round 0 on 37 starts, slower on 9, sign test p = 4e-5, −6.2 steps on average). On climb it
+keeps 49–50/50 and gains less than one step (σ = 0.1: 28 faster, 2 slower, p = 9e-7, −0.7 steps),
+which leaves the WAM at the speed of the cloned policy (Section 5.5). With ensembling, climb
+collapses, even without noise: the
+executed action is a weighted average of older chunks, so the fine-tuning labels are a lagged and
+smoothed copy of the model's own predictions; ensembling them again at the next round adds lag,
+and the lift phase of climb is timing-critical. Without ensembling, noise-free self-imitation is
+stable (50/50).
 
 ## 6. Negative results and fixed defects
 
@@ -267,6 +364,10 @@ in [15]. Validation error of the steps-to-go prediction (MAE / RMSE): roll 14.8 
 | MAPPO critic input normalisation | statistics taken at reset, velocity std ≈ 1e-3 | replaced by raw state |
 | Curriculum streak | reset by iterations without finished episodes | fixed |
 | CUDA "illegal instruction" in long backward passes | crash at full scale only | RL runs on CPU |
+| MPPI with the hand-written skill cost | climb ≤ 6/10, pull ≤ 2/10; the cloned proposal is rejected | cost misaligned with the skill's end; replaced by a learned steps-to-go value |
+| WAM frame deltas normalised by the state std | climb 5/10 | near-constant state dimensions dominate the loss; normalise by the deltas' std |
+| Self-imitation labels clipped to [-1, 1] | biased saturated labels (lift is 0 or ±1) | label with the sample before clipping (climb still collapsed: next row) |
+| Self-imitation on temporally ensembled rollouts | climb 50/50 → 0–36/50 | lagged labels; collect without ensembling |
 
 ## 7. Threats to validity and limits
 
@@ -285,9 +386,11 @@ Software: Python 3.12.13, MuJoCo 4.0.1,
 PyTorch 2.15.0 (CUDA 13.2), NumPy 2.5.5, Gymnasium 1.4.0, PettingZoo 1.27.0; one RTX 4070 Laptop
 GPU, 6 CPU cores. Environment: `uv sync --extra dev --extra torch`.
 
-Software tests: before the skill modules were added, `uv run ruff check src tests` and
-`MUJOCO_GL=egl uv run pytest -q --cov` passed with 110 tests and 100 % coverage. `swarm_rl.py`,
-`swarm_skills.py` and the `step_height` option have no tests yet.
+Software tests: `uv run ruff check src tests` and `MUJOCO_GL=egl uv run pytest -q --cov` pass
+with 128 tests and 100 % line and branch coverage, including `swarm_rl.py`, `swarm_skills.py`,
+`swarm_wam.py` and the `step_height` option (`tests/test_swarm_rl.py`,
+`tests/test_swarm_skills.py`). Tests check interfaces, invariants and that losses decrease; they do
+not reproduce the success rates above.
 
 Experiment scripts are copied in `docs/paper/experiments/` (paths inside are absolute to the
 author's machine and still need to be parametrised):
@@ -302,17 +405,20 @@ author's machine and still need to be parametrised):
 | 5.4 controllers | `skills_s1.py` | 0–29 |
 | 5.4 skill models | `skills_s2.py` | train 0, 1000, 2000 (+episode); val 90000 |
 | 5.4 MPPI | `skills_s3.py`, `skills_prior.py` | episodes 0–9, start sampler seed 123 |
+| 5.5 WAM | `skills_wam.py`, `skills_wam_stats.py` | same starts (10 or 50 episodes) |
+| 5.6 self-imitation | `skills_selfimit.py` | rollouts 100000·round (+start); eval as 5.5 |
 
 Whole-task pipeline: `uv run python -m modular_sphere.tools.train_swarm` (see `--help`).
 
 ## 9. Next steps
 
-1. Finish S3: MPPI with the skill prior; oracle-model MPPI ablation; 50 episodes per skill.
-2. S4: skill effect models (start → duration, success) as in [15]; a planner that assigns roles
+1. WAM: ablations (no history, no chunking, no
+   frame loss) to tell which part solves climb; self-imitation for roll.
+2. MPPI baseline: oracle-model ablation on climb; 50 episodes per skill.
+3. S4: skill effect models (start → duration, success) as in [15]; a planner that assigns roles
    and schedules skills in parallel over sphere subsets (for example two climbs at once), replanning
    at skill ends; compare with the expert and DAgger on test seeds (McNemar on success, sign test on
    steps, fraction of spheres moving).
-3. Tests and documentation for the new modules.
 
 ## References
 
@@ -355,3 +461,11 @@ Whole-task pipeline: `uv run python -m modular_sphere.tools.train_swarm` (see `-
     arXiv:2009.14471.
 19. Q. McNemar. *Note on the sampling error of the difference between correlated proportions or
     percentages*. Psychometrika 12(2):153–157, 1947. doi:10.1007/BF02295996.
+20. NVIDIA. *GR00T 2: Scaling Robot Foundation Models for Generalization, Dexterity, and
+    Adaptation* (whitepaper). November 2026. https://research.nvidia.com/labs/gear/gr00t-2/assets/gr00t2_whitepaper.pdf.
+21. M. J. Kim et al. *Cosmos Policy: Fine-Tuning Video Models for Visuomotor Control and Planning*.
+    ICLR 2026. arXiv:2601.16163.
+22. T. Z. Zhao, V. Kumar, S. Levine, C. Finn. *Learning Fine-Grained Bimanual Manipulation with
+    Low-Cost Hardware*. RSS 2023. arXiv:2304.13705.
+23. Z. Shao et al. *DeepSeekMath: Pushing the Limits of Mathematical Reasoning in Open Language
+    Models*. 2024. arXiv:2402.03300.
