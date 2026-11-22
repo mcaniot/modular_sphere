@@ -6,7 +6,7 @@ The scripted swarm approach is learned in three stages (data from :mod:`modular_
    Sanchez-Gonzalez et al., 2020). Nodes carry pos, vel, ang_vel, the clipped distances to the
    walls and the step (GNS boundary features; without them the model lets spheres drive through
    the step) and the sphere action; directed edges carry the relative position and velocity,
-   the link flag and the sender action. A message
+   the distance, the link flag and both endpoint actions. A message
    MLP summed per receiver feeds a node MLP that predicts the normalized change of the sphere
    state; an edge MLP predicts the next link logits. Trained on unrolled multi-step windows (as
    GNS training noise, it limits compounding error). The reward is not learned: it is computed
@@ -15,15 +15,18 @@ The scripted swarm approach is learned in three stages (data from :mod:`modular_
    execution): the other spheres form a set encoded by a shared MLP and mean/max pooled
    (Deep Sets, Zaheer et al., 2017). Trained by behaviour cloning of the expert labels, iterated
    with DAgger (``swarm_data.collect(policy=...)``).
-3. Improvement in imagination (``improve_in_imagination``): Dreamer-style actor-critic
-   (Hafner et al., 2023) on lambda-returns of world-model rollouts started from dataset states,
-   with a behaviour-cloning regulariser towards the expert (as TD3+BC, Fujimoto & Gu, 2021).
+3. Improvement in the model (``improve_with_ppo``, used by ``tools/train_swarm.py``): PPO on
+   world-model rollouts with a KL to the imitation policy. ``improve_in_imagination`` keeps the
+   Dreamer-style actor-critic (Hafner et al., 2023) on lambda-returns with a behaviour-cloning
+   regulariser (as TD3+BC, Fujimoto & Gu, 2021); it exploited the model (0 % real success).
 """
 
 from __future__ import annotations
 
 import itertools
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from typing import Any, Self
 
 import numpy as np
 import torch
@@ -35,11 +38,10 @@ from modular_sphere.swarm import (
     ACT_DIM,
     STEP_H,
     STEP_X,
-    SphereSwarmStepEnv,
     gather_radius,
     obs_slices,
 )
-from modular_sphere.swarm_data import SwarmDataset
+from modular_sphere.swarm_data import SwarmDataset, run_episodes, stack_obs
 
 Array = NDArray[np.float64]
 EPS = 1e-6
@@ -59,6 +61,48 @@ def _mlp(d_in: int, d_out: int, hidden: int, layers: int = 2) -> nn.Sequential:
 
 def _device(device: str | None) -> torch.device:
     return torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
+
+
+def _fit_epochs(params: Iterable[nn.Parameter], n: int,
+                batch_loss: Callable[[torch.Tensor], torch.Tensor], epochs: int, lr: float,
+                batch_size: int, seed: int, device: torch.device, weight_decay: float = 1e-5,
+                clip: float | None = None) -> list[float]:  # fmt: skip
+    """AdamW with cosine decay over ``epochs`` seeded shuffles of ``n`` samples;
+    ``batch_loss(idx)`` is the mean loss of a batch. Returns the mean loss of each epoch."""
+    if n == 0:
+        raise ValueError("no training samples")
+    params = list(params)
+    optim = torch.optim.AdamW(params, lr=lr, weight_decay=weight_decay)
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=epochs)
+    gen = torch.Generator(device="cpu").manual_seed(seed)
+    losses = []
+    for _ in range(epochs):
+        total = 0.0
+        for idx in torch.randperm(n, generator=gen).to(device).split(batch_size):
+            loss = batch_loss(idx)
+            optim.zero_grad(set_to_none=True)
+            loss.backward()
+            if clip is not None:
+                nn.utils.clip_grad_norm_(params, clip)
+            optim.step()
+            total += loss.item() * idx.numel()
+        sched.step()
+        losses.append(total / n)
+    return losses
+
+
+def squash(out: torch.Tensor) -> torch.Tensor:
+    """Raw outputs (..., 4) -> tanh(fx, fy, lift) and the unchanged attach logit."""
+    return torch.cat([torch.tanh(out[..., :3]), out[..., 3:]], dim=-1)
+
+
+def imitation_loss(out: torch.Tensor, expert: torch.Tensor) -> torch.Tensor:
+    """Per-sample imitation loss (...,): MSE on fx, fy, lift plus BCE of the attach logit."""
+    mse = ((out[..., :3] - expert[..., :3]) ** 2).mean(-1)
+    bce = nn.functional.binary_cross_entropy_with_logits(
+        out[..., 3], (expert[..., 3] > 0).float(), reduction="none"
+    )
+    return mse + bce
 
 
 def _boundary(pos: torch.Tensor) -> torch.Tensor:
@@ -109,21 +153,53 @@ class _InteractionNet(nn.Module):
         return delta, logits.masked_fill(mask == 0, -20.0)
 
 
-class SwarmWorldModel:
-    """Learned swarm dynamics: ``rollout(spheres0, links0, actions) -> (spheres, links)``."""
+class _Learner:
+    """Shared shell of the learned swarm models: training hyper-parameters, a network whose
+    initial weights ``seed`` sets, normalisation ``stats`` and checkpoints of both."""
 
-    def __init__(self, hidden: int = 128, epochs: int = 30, window: int = 8,
-                 batch_size: int = 512, lr: float = 1e-3, seed: int = 0,
-                 device: str | None = None) -> None:  # fmt: skip
-        self.hidden, self.epochs, self.window = hidden, epochs, window
+    def __init__(self, net: Callable[[], nn.Module], hidden: int, epochs: int, batch_size: int,
+                 lr: float, seed: int, device: str | None) -> None:  # fmt: skip
+        self.hidden, self.epochs = hidden, epochs
         self.batch_size, self.lr, self.seed = batch_size, lr, seed
         self.device = _device(device)
-        self.net = _InteractionNet(hidden).to(self.device)
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(seed)
+            self.net = net().to(self.device)
         self.stats: dict[str, torch.Tensor] = {}
         self.train_losses: list[float] = []
 
     def _t(self, x: Array | NDArray[np.bool_]) -> torch.Tensor:
         return torch.as_tensor(np.asarray(x, dtype=np.float32), device=self.device)
+
+    def _config(self) -> dict[str, int]:
+        """Architecture stored in the checkpoint, read back by ``_from_config``."""
+        return {"hidden": self.hidden}
+
+    @classmethod
+    def _from_config(cls, cfg: dict[str, Any], device: str | None) -> Self:
+        return cls(hidden=cfg["hidden"], device=device)  # type: ignore[call-arg]
+
+    def save(self, path: str) -> None:
+        torch.save({**self._config(), "state": self.net.state_dict(), "stats": self.stats}, path)
+
+    @classmethod
+    def load(cls, path: str, device: str | None = None) -> Self:
+        ckpt = torch.load(path, map_location=_device(device), weights_only=True)
+        model = cls._from_config(ckpt, device)
+        model.net.load_state_dict(ckpt["state"])
+        model.stats = {k: v.to(model.device) for k, v in ckpt["stats"].items()}
+        return model
+
+
+class SwarmWorldModel(_Learner):
+    """Learned swarm dynamics: ``rollout(spheres0, links0, actions) -> (spheres, links)``."""
+
+    def __init__(self, hidden: int = 128, epochs: int = 30, window: int = 8,
+                 batch_size: int = 512, lr: float = 1e-3, seed: int = 0,
+                 device: str | None = None) -> None:  # fmt: skip
+        super().__init__(lambda: _InteractionNet(hidden), hidden, epochs, batch_size, lr, seed,
+                         device)  # fmt: skip
+        self.window = window
 
     def step(
         self, x: torch.Tensor, links: torch.Tensor, act: torch.Tensor
@@ -146,38 +222,29 @@ class SwarmWorldModel:
                 "d_std": d_flat.std((0, 1)) + EPS,
             }
         h = self.window
-        e_idx, t_idx = torch.nonzero(valid[:, : valid.shape[1] - h + 1], as_tuple=True)
-        optim = torch.optim.AdamW(self.net.parameters(), lr=self.lr, weight_decay=1e-5)
-        sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=self.epochs)
-        gen = torch.Generator(device="cpu").manual_seed(self.seed)
+        e_idx, t_idx = torch.nonzero(valid[:, : max(valid.shape[1] - h + 1, 0)], as_tuple=True)
         steps = torch.arange(h + 1, device=self.device)
-        self.train_losses = []
-        for _ in range(self.epochs):
-            perm = torch.randperm(e_idx.numel(), generator=gen).to(self.device)
-            total = 0.0
-            for batch in perm.split(self.batch_size):
-                e, t = e_idx[batch, None], t_idx[batch, None] + steps
-                xs, ls, acts = sph[e, t], links[e, t], act[e, t[:, :-1]]
-                w = valid[e, t[:, :-1]].float()  # padded steps after the end do not count
-                x, lk, loss = xs[:, 0], ls[:, 0], torch.zeros((), device=self.device)
-                for k in range(h):
-                    delta, logits = self.net(x, lk, acts[:, k], self.stats)
-                    target = (xs[:, k + 1] - x - self.stats["d_mean"]) / self.stats["d_std"]
-                    mse = ((delta - target) ** 2).mean((1, 2))
-                    bce = nn.functional.binary_cross_entropy_with_logits(
-                        logits, ls[:, k + 1], reduction="none"
-                    ).mean((1, 2))
-                    loss = loss + ((mse + bce) * w[:, k]).sum() / w[:, k].sum().clamp(min=1)
-                    x = x + delta * self.stats["d_std"] + self.stats["d_mean"]
-                    lk = torch.sigmoid(logits)
-                loss = loss / h
-                optim.zero_grad(set_to_none=True)
-                loss.backward()
-                nn.utils.clip_grad_norm_(self.net.parameters(), 10.0)
-                optim.step()
-                total += loss.item() * batch.numel()
-            sched.step()
-            self.train_losses.append(total / e_idx.numel())
+
+        def window_loss(batch: torch.Tensor) -> torch.Tensor:
+            e, t = e_idx[batch, None], t_idx[batch, None] + steps
+            xs, ls, acts = sph[e, t], links[e, t], act[e, t[:, :-1]]
+            w = valid[e, t[:, :-1]].float()  # padded steps after the end do not count
+            x, lk, loss = xs[:, 0], ls[:, 0], torch.zeros((), device=self.device)
+            for k in range(h):
+                delta, logits = self.net(x, lk, acts[:, k], self.stats)
+                target = (xs[:, k + 1] - x - self.stats["d_mean"]) / self.stats["d_std"]
+                mse = ((delta - target) ** 2).mean((1, 2))
+                bce = nn.functional.binary_cross_entropy_with_logits(
+                    logits, ls[:, k + 1], reduction="none"
+                ).mean((1, 2))
+                loss = loss + ((mse + bce) * w[:, k]).sum() / w[:, k].sum().clamp(min=1)
+                x = x + delta * self.stats["d_std"] + self.stats["d_mean"]
+                lk = torch.sigmoid(logits)
+            return loss / h
+
+        self.train_losses = _fit_epochs(self.net.parameters(), e_idx.numel(), window_loss,
+                                        self.epochs, self.lr, self.batch_size, self.seed,
+                                        self.device, clip=10.0)  # fmt: skip
 
     @torch.no_grad()
     def rollout(
@@ -192,19 +259,6 @@ class SwarmWorldModel:
             xs.append(x)
             ls.append(lk)
         return torch.stack(xs, 1).double().cpu().numpy(), torch.stack(ls, 1).double().cpu().numpy()
-
-    def save(self, path: str) -> None:
-        torch.save(
-            {"hidden": self.hidden, "state": self.net.state_dict(), "stats": self.stats}, path
-        )
-
-    @classmethod
-    def load(cls, path: str, device: str | None = None) -> SwarmWorldModel:
-        ckpt = torch.load(path, map_location=_device(device), weights_only=True)
-        model = cls(hidden=ckpt["hidden"], device=device)
-        model.net.load_state_dict(ckpt["state"])
-        model.stats = {k: v.to(model.device) for k, v in ckpt["stats"].items()}
-        return model
 
 
 def evaluate_world_model(
@@ -227,6 +281,7 @@ def evaluate_world_model(
     )
     target, target_links = data.spheres[e[:, None], steps], data.links[e[:, None], steps]
     x0 = data.spheres[e, t]
+    off = ~np.eye(data.links.shape[-1], dtype=bool)  # the diagonal is never a link
     out = {}
     for k in sorted(horizons):
         err = pred[:, k - 1] - target[:, k - 1]
@@ -235,7 +290,7 @@ def evaluate_world_model(
             "pos": float(np.sqrt((err[..., :3] ** 2).mean())),
             "vel": float(np.sqrt((err[..., 3:6] ** 2).mean())),
             "ang_vel": float(np.sqrt((err[..., 6:] ** 2).mean())),
-            "link_acc": float(((links[:, k - 1] > 0.5) == target_links[:, k - 1]).mean()),
+            "link_acc": float(((links[:, k - 1] > 0.5) == target_links[:, k - 1])[..., off].mean()),
             "const_vel_pos": float(np.sqrt((cv**2).mean())),
         }
     return out
@@ -256,33 +311,28 @@ class _PolicyNet(nn.Module):
         others = obs[..., self.sl["others"]].unflatten(-1, (self.n - 1, 7))
         tokens = torch.cat([own[..., None, :].expand(*others.shape[:-1], 12), others], dim=-1)
         enc = self.other(tokens)
-        out = self.head(torch.cat([own, enc.mean(-2), enc.amax(-2)], dim=-1))
-        return torch.cat([torch.tanh(out[..., :3]), out[..., 3:]], dim=-1)
+        return squash(self.head(torch.cat([own, enc.mean(-2), enc.amax(-2)], dim=-1)))
 
 
-class SwarmPolicy:
+class SwarmPolicy(_Learner):
     """Shared decentralised policy: callable ``obs dict -> action dict`` (attach in {-1, 1})."""
 
     def __init__(self, n_spheres: int, hidden: int = 256, epochs: int = 20,
                  batch_size: int = 2048, lr: float = 1e-3, seed: int = 0,
                  device: str | None = None) -> None:  # fmt: skip
-        self.n, self.hidden, self.epochs = n_spheres, hidden, epochs
-        self.batch_size, self.lr, self.seed = batch_size, lr, seed
-        self.device = _device(device)
-        self.net = _PolicyNet(n_spheres, hidden).to(self.device)
-        self.stats: dict[str, torch.Tensor] = {}
-        self.train_losses: list[float] = []
+        super().__init__(lambda: _PolicyNet(n_spheres, hidden), hidden, epochs, batch_size, lr,
+                         seed, device)  # fmt: skip
+        self.n = n_spheres
 
-    def _t(self, x: Array) -> torch.Tensor:
-        return torch.as_tensor(np.asarray(x, dtype=np.float32), device=self.device)
+    def _config(self) -> dict[str, int]:
+        return {"n": self.n, "hidden": self.hidden}
+
+    @classmethod
+    def _from_config(cls, cfg: dict[str, Any], device: str | None) -> Self:
+        return cls(cfg["n"], hidden=cfg["hidden"], device=device)
 
     def loss(self, obs: torch.Tensor, expert: torch.Tensor) -> torch.Tensor:
-        out = self.net(obs, self.stats)
-        mse = ((out[..., :3] - expert[..., :3]) ** 2).mean(-1)
-        bce = nn.functional.binary_cross_entropy_with_logits(
-            out[..., 3], (expert[..., 3] > 0).float(), reduction="none"
-        )
-        return mse + bce
+        return imitation_loss(self.net(obs, self.stats), expert)
 
     def fit(self, data: SwarmDataset) -> None:
         """Behaviour cloning on every valid (local obs, expert label) pair."""
@@ -291,40 +341,27 @@ class SwarmPolicy:
         obs = self._t(data.obs[:, :-1][valid].reshape(-1, data.obs.shape[-1]))
         expert = self._t(data.expert[valid].reshape(-1, ACT_DIM))
         self.stats = {"mean": obs.mean(0), "std": obs.std(0) + EPS}
-        optim = torch.optim.AdamW(self.net.parameters(), lr=self.lr, weight_decay=1e-5)
-        sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=self.epochs)
-        gen = torch.Generator(device="cpu").manual_seed(self.seed)
-        self.train_losses = []
-        for _ in range(self.epochs):
-            perm = torch.randperm(obs.shape[0], generator=gen).to(self.device)
-            total = 0.0
-            for idx in perm.split(self.batch_size):
-                loss = self.loss(obs[idx], expert[idx]).mean()
-                optim.zero_grad(set_to_none=True)
-                loss.backward()
-                optim.step()
-                total += loss.item() * idx.numel()
-            sched.step()
-            self.train_losses.append(total / obs.shape[0])
+        self.train_losses = _fit_epochs(
+            self.net.parameters(),
+            obs.shape[0],
+            lambda idx: self.loss(obs[idx], expert[idx]).mean(),
+            self.epochs,
+            self.lr,
+            self.batch_size,
+            self.seed,
+            self.device,
+        )
 
     @torch.no_grad()
+    def act(self, obs: Array) -> Array:
+        """Deterministic actions (..., 4) from stacked local observations (..., D)."""
+        out = self.net(self._t(obs), self.stats).cpu().numpy().astype(np.float64)
+        out[..., 3] = np.where(out[..., 3] > 0, 1.0, -1.0)
+        return out
+
     def __call__(self, obs: dict[str, Array]) -> dict[str, Array]:
         agents = list(obs)
-        out = self.net(self._t(np.stack([obs[a] for a in agents])), self.stats).cpu().numpy()
-        out[:, 3] = np.where(out[:, 3] > 0, 1.0, -1.0)
-        return dict(zip(agents, out.astype(np.float64), strict=True))
-
-    def save(self, path: str) -> None:
-        torch.save({"n": self.n, "hidden": self.hidden, "state": self.net.state_dict(),
-                    "stats": self.stats}, path)  # fmt: skip
-
-    @classmethod
-    def load(cls, path: str, device: str | None = None) -> SwarmPolicy:
-        ckpt = torch.load(path, map_location=_device(device), weights_only=True)
-        policy = cls(ckpt["n"], hidden=ckpt["hidden"], device=device)
-        policy.net.load_state_dict(ckpt["state"])
-        policy.stats = {k: v.to(policy.device) for k, v in ckpt["stats"].items()}
-        return policy
+        return dict(zip(agents, self.act(stack_obs(obs, agents)), strict=True))
 
 
 @dataclass
@@ -336,18 +373,7 @@ class PolicyEval:
 
 def evaluate_policy(policy: SwarmPolicy, n_spheres: int, seeds: list[int]) -> PolicyEval:
     """Closed-loop evaluation in MuJoCo (ground truth), one episode per seed."""
-    env = SphereSwarmStepEnv(n_spheres=n_spheres)
-    success, steps, arrived = [], [], []
-    for seed in seeds:
-        obs, _ = env.reset(seed=seed)
-        t, info = 0, {}
-        while env.agents:
-            obs, _, _, _, infos = env.step(policy(obs))
-            info, t = infos[env.possible_agents[0]], t + 1
-        success.append(info["is_success"])
-        steps.append(t)
-        arrived.append(info["n_arrived"])
-    return PolicyEval(np.array(success), np.array(steps), np.array(arrived))
+    return PolicyEval(*run_episodes(policy, n_spheres, seeds))
 
 
 def task_reward(
@@ -511,9 +537,9 @@ def improve_in_imagination(
 
 
 def _ppo_dist(
-    policy: SwarmPolicy, obs: torch.Tensor, log_std: torch.Tensor
+    out: torch.Tensor, log_std: torch.Tensor
 ) -> tuple[torch.distributions.Normal, torch.distributions.Bernoulli]:
-    out = policy.net(obs, policy.stats)
+    """Gaussian fx, fy, lift and Bernoulli attach from raw policy outputs (..., 4)."""
     return (
         torch.distributions.Normal(out[..., :3], log_std.exp().expand_as(out[..., :3])),
         torch.distributions.Bernoulli(logits=out[..., 3]),
@@ -574,10 +600,10 @@ def improve_with_ppo(
     t = policy._t
     sph, links, goal = t(data.spheres), t(data.links), t(data.goal)
     e_idx, t_idx = torch.nonzero(torch.as_tensor(data.valid, device=dev), as_tuple=True)
-    reference = _PolicyNet(policy.n, policy.hidden).to(dev)
     ref_policy = anchor or policy
+    reference = _PolicyNet(ref_policy.n, ref_policy.hidden).to(dev)
     reference.load_state_dict(ref_policy.net.state_dict())
-    std = torch.tensor(log_std, device=dev)
+    log_std_t = torch.tensor(log_std, device=dev)
     critic = _Critic(policy.hidden).to(dev)
     actor_opt = torch.optim.Adam(policy.net.parameters(), lr=lr)
     critic_opt = torch.optim.Adam(critic.parameters(), lr=3e-4)
@@ -592,7 +618,7 @@ def improve_with_ppo(
         with torch.no_grad():
             for _ in range(horizon):
                 obs = local_obs(x, lk, g)
-                dists = _ppo_dist(policy, obs, std)
+                dists = _ppo_dist(policy.net(obs, policy.stats), log_std_t)
                 cont, attach = dists[0].sample(), dists[1].sample()
                 step = (x, lk, obs, cont, attach, _log_prob(dists, cont, attach))
                 for k, v in zip(buf, step, strict=True):
@@ -626,15 +652,15 @@ def improve_with_ppo(
         adv_f = (adv_f - adv_f.mean()) / (adv_f.std() + 1e-8)
         for _ in range(epochs):
             for idx in torch.randperm(adv_f.numel(), device=dev).split(minibatch):
-                dists = _ppo_dist(policy, flat["obs"][idx], std)
+                dists = _ppo_dist(policy.net(flat["obs"][idx], policy.stats), log_std_t)
                 ratio = (_log_prob(dists, flat["c"][idx], flat["a"][idx]) - flat["lp"][idx]).exp()
                 surrogate = torch.minimum(
                     ratio * adv_f[idx], ratio.clamp(1 - clip, 1 + clip) * adv_f[idx]
                 )
                 with torch.no_grad():
                     ref = reference(flat["obs"][idx], ref_policy.stats)
-                ref_n = torch.distributions.Normal(ref[..., :3], std.exp().expand_as(ref[..., :3]))
-                kl = torch.distributions.kl_divergence(dists[0], ref_n).sum((-1, -2))
+                kl = torch.distributions.kl_divergence(dists[0], _ppo_dist(ref, log_std_t)[0])
+                kl = kl.sum((-1, -2))
                 kl = kl + _bernoulli_kl(dists[1].logits, ref[..., 3]).sum(-1)
                 actor_loss = -surrogate.mean() + kl_weight * kl.mean()
                 actor_opt.zero_grad(set_to_none=True)

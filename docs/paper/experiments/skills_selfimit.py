@@ -11,6 +11,7 @@ import dataclasses
 import pickle
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -30,7 +31,7 @@ kw = dict(a.split("=") for a in sys.argv[3:])
 rounds, starts, group = int(kw.get("rounds", 3)), int(kw.get("starts", 40)), int(kw.get("group", 8))
 noise, n_eval = float(kw.get("noise", 0.2)), int(kw.get("eval", 50))
 ens = None if kw.get("ens", "0.1") == "none" else float(kw.get("ens", 0.1))
-root = "/home/mcaniot/Documents/modular_sphere/data/swarm/skills"
+root = str(Path(__file__).resolve().parents[3] / "data/swarm/skills")
 ag = (0,) if name == "roll" else (0, 1)
 
 
@@ -46,11 +47,10 @@ def evaluate(wam: SkillWAM) -> tuple[np.ndarray, np.ndarray]:
         env.reset(seed=e)
         start, target = sample_start(name, rng, env.radius)
         place(env, start)
-        env.data.mocap_pos[env._goal_mocap][:2] = (10.0, 10.0)
         call = SkillCall(name, ag, target)
         judge, ctrl = SkillController(call, 2, env.radius), WAMController(wam, call, 2, ens)
         for t in range(MAX_SKILL_STEPS):
-            act = ctrl.act(np.concatenate(env._kinematics(), 1), env.links)
+            act = ctrl.act(env.spheres(), env.links)
             env.step({a: act[i] for i, a in enumerate(env.possible_agents)})
             pos, vel = env._kinematics()[:2]
             if judge.done(pos, vel):
@@ -80,8 +80,11 @@ for r in range(1, rounds + 1):
     wam.save(f"{root}/wam_{name}_si{r}.pt")
     ok, steps = evaluate(wam)
     results[f"r{r}"] = (ok, steps)
-    print(f"{name} round {r}: rollouts success {data.success.mean():.2f}, steps on success "
-          f"{st[data.success].mean():.1f}, elite {keep.sum()}; eval success {ok.sum()}/{n_eval}, "
-          f"steps on success {steps[ok].mean():.1f} ({time.time() - t0:.0f}s)", flush=True)
+    print(
+        f"{name} round {r}: rollouts success {data.success.mean():.2f}, steps on success "
+        f"{st[data.success].mean():.1f}, elite {keep.sum()}; eval success {ok.sum()}/{n_eval}, "
+        f"steps on success {steps[ok].mean():.1f} ({time.time() - t0:.0f}s)",
+        flush=True,
+    )
 with open(f"{root}/selfimit_{name}.pkl", "wb") as f:
     pickle.dump(results, f)

@@ -24,6 +24,7 @@ from modular_sphere.swarm import ACT_DIM, SphereSwarmStepEnv
 from modular_sphere.swarm_data import SwarmDataset, empty_arrays
 from modular_sphere.swarm_skills import (
     MAX_SKILL_STEPS,
+    SKILL_AGENTS,
     STD_FLOOR,
     SkillCall,
     SkillController,
@@ -31,7 +32,9 @@ from modular_sphere.swarm_skills import (
     place,
     sample_start,
     skill_features,
+    swarm_action,
 )  # fmt: skip
+from modular_sphere.swarm_torch import _fit_epochs, imitation_loss, squash
 
 Array = NDArray[np.float64]
 
@@ -76,8 +79,7 @@ class SkillWAM(nn.Module):
         q = self.kind[1:].repeat_interleave(h, 0)[None].expand(b, -1, -1)
         z = self.body(torch.cat([x, q], 1) + self.pos)
         frames = self.frame_head(z[:, k : k + h])
-        out = self.act_head(z[:, k + h :]).unflatten(-1, (self.n_agents, ACT_DIM))
-        return frames, torch.cat([torch.tanh(out[..., :3]), out[..., 3:]], -1)
+        return frames, squash(self.act_head(z[:, k + h :]).unflatten(-1, (self.n_agents, ACT_DIM)))
 
     def _windows(self, data: SwarmDataset, calls: list[SkillCall], device: torch.device
                  ) -> tuple[torch.Tensor, ...]:  # fmt: skip
@@ -120,38 +122,21 @@ class SkillWAM(nn.Module):
             self.delta_std.copy_(delta.clamp(min=STD_FLOOR / 10))  # per-step deltas are smaller
         scale = torch.tensor([1.0] * 3 + [2.0] * 6, device=dev).repeat(self.n_agents)
         scale = input_noise * nn.functional.pad(scale, (0, self.dim - scale.numel()))
-        optim = torch.optim.AdamW(self.parameters(), lr=lr, weight_decay=1e-4)
-        sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=epochs)
-        gen = torch.Generator(device="cpu").manual_seed(seed)
-        losses = []
-        for _ in range(epochs):
-            total = 0.0
-            for idx in torch.randperm(hist.shape[0], generator=gen).to(dev).split(batch_size):
-                h = hist[idx]
-                noisy = h + scale * torch.randn_like(h)
-                loss = self.loss(noisy, fut[idx], act[idx], mask[idx], frame_weight, h[:, -1:])
-                optim.zero_grad(set_to_none=True)
-                loss.backward()
-                nn.utils.clip_grad_norm_(self.parameters(), 1.0)
-                optim.step()
-                total += loss.item() * idx.numel()
-            sched.step()
-            losses.append(total / hist.shape[0])
-        return losses
+
+        def noisy_loss(idx: torch.Tensor) -> torch.Tensor:
+            h = hist[idx]
+            noisy = h + scale * torch.randn_like(h)
+            return self.loss(noisy, fut[idx], act[idx], mask[idx], frame_weight, h[:, -1:])
+
+        return _fit_epochs(self.parameters(), hist.shape[0], noisy_loss, epochs, lr, batch_size,
+                           seed, dev, weight_decay=1e-4, clip=1.0)  # fmt: skip
 
     def loss(self, hist: torch.Tensor, fut: torch.Tensor, act: torch.Tensor, mask: torch.Tensor,
-             frame_weight: float = 1.0, last: torch.Tensor | None = None
-             ) -> torch.Tensor:  # fmt: skip
-        """``last``: clean last history frame the future deltas are taken from (default:
-        ``hist[:, -1:]``)."""
+             frame_weight: float, last: torch.Tensor) -> torch.Tensor:  # fmt: skip
+        """``last``: clean last history frame the future deltas are taken from."""
         frames, out = self(hist)
-        target = (fut - (hist[:, -1:] if last is None else last)) / self.delta_std
-        frame_loss = ((frames - target) ** 2).mean()
-        mse = ((out[..., :3] - act[..., :3]) ** 2).mean(-1)
-        bce = nn.functional.binary_cross_entropy_with_logits(
-            out[..., 3], (act[..., 3] > 0).float(), reduction="none"
-        )
-        act_loss = ((mse + bce).mean(-1) * mask).sum() / mask.sum().clamp(min=1.0)
+        frame_loss = ((frames - (fut - last) / self.delta_std) ** 2).mean()
+        act_loss = (imitation_loss(out, act).mean(-1) * mask).sum() / mask.sum().clamp(min=1.0)
         return act_loss + frame_weight * frame_loss
 
     def save(self, path: str) -> None:
@@ -199,10 +184,7 @@ class WAMController:
             w = torch.exp(-self.ensemble * order)
             a = (w[:, None, None] * torch.stack(preds)).sum(0) / w.sum()
         self.t += 1
-        out = np.zeros((self.n, ACT_DIM))
-        out[list(self.call.agents)] = a.cpu().numpy()
-        out[:, 3] = np.where(out[:, 3] > 0, 1.0, -1.0)
-        return out
+        return swarm_action(self.n, self.call.agents, a.cpu().numpy())
 
 
 def rollout_skill(wam: SkillWAM, name: str, n_starts: int, group: int = 8, noise: float = 0.2,
@@ -212,10 +194,10 @@ def rollout_skill(wam: SkillWAM, name: str, n_starts: int, group: int = 8, noise
     with Gaussian noise on the executed fx, fy, lift. Episodes are ordered start by start; the
     dataset's ``expert`` holds the noisy samples before clipping (self-imitation labels)."""
     env = SphereSwarmStepEnv(n_spheres=2, max_steps=MAX_SKILL_STEPS + 1)
-    ag = (0,) if name == "roll" else (0, 1)
+    ag = SKILL_AGENTS[name]
     rng, n_eps, horizon = np.random.default_rng(seed), n_starts * group, MAX_SKILL_STEPS
     out = empty_arrays(n_eps, horizon, 2, env.slices["others"].stop)
-    calls, steps = [], np.zeros(n_eps, dtype=np.int64)
+    calls = []
     for s in range(n_starts):
         start, target = sample_start(name, rng, env.radius)
         call = SkillCall(name, ag, target)
@@ -223,10 +205,10 @@ def rollout_skill(wam: SkillWAM, name: str, n_starts: int, group: int = 8, noise
             e = s * group + g
             env.reset(seed=seed + s)
             place(env, start)
-            env.data.mocap_pos[env._goal_mocap][:2] = (10.0, 10.0)
+            out["goal"][e] = env.goal
             judge = SkillController(call, 2, env.radius)
             ctrl = WAMController(wam, call, 2, ensemble)
-            out["spheres"][e] = np.concatenate(env._kinematics(), 1)
+            out["spheres"][e] = env.spheres()
             out["links"][e] = env.links
             for t in range(horizon):
                 act = ctrl.act(out["spheres"][e, t], env.links)
@@ -237,15 +219,14 @@ def rollout_skill(wam: SkillWAM, name: str, n_starts: int, group: int = 8, noise
                 env.step({a: act[i] for i, a in enumerate(env.possible_agents)})
                 out["actions"][e, t] = act
                 out["valid"][e, t] = True
-                out["spheres"][e, t + 1 :] = np.concatenate(env._kinematics(), 1)
+                out["spheres"][e, t + 1 :] = env.spheres()
                 out["links"][e, t + 1 :] = env.links
-                pos, vel = env._kinematics()[:2]
-                if judge.done(pos, vel):
+                x = out["spheres"][e, t + 1]
+                if judge.done(x[:, :3], x[:, 3:6]):
                     out["success"][e] = True
                     break
-            steps[e] = t + 1
             calls.append(call)
-    return SwarmDataset(**out), calls, steps
+    return SwarmDataset(**out), calls, out["valid"].sum(1)
 
 
 def select_elite(success: NDArray[np.bool_], steps: NDArray[np.int64], group: int

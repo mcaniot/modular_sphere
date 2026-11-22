@@ -47,8 +47,12 @@ p = 1.8e-15, ×0.55), zero-shot, because every skill call is expressed in the fr
 first MOSAIC fails under sensor noise, other friction, lower steps and N = 5. With a normalisation
 floor, sensor-noise augmentation and chain data with randomised mass, friction and rise mixed with
 the nominal data, it matches the expert's success and stays about twice as fast on fresh courses
-in seven of nine perturbed conditions; it remains below the expert under 5 mm of noise (42/50
-against 49/50) and with spheres 30 % lighter (28/50 against 50/50).
+in seven of nine perturbed conditions; it remained below the expert under 5 mm of noise (42/50
+against 49/50) and with spheres 30 % lighter (4/50 against 50/50), where the scripted skills
+also dropped to 23/50. The cause was the scripted pull: full lift launched the base and dragged a
+light helper off the edge. An energy-based pull (lift metered by the base's specific energy, which
+does not depend on the mass; Åström and Furuta, 2000) and executors retrained on its labels solve
+50/50 with lighter spheres on fresh courses (2/50 before), and keep O1 (50/50, ×0.57).
 
 ## 1. Introduction
 
@@ -502,8 +506,10 @@ step frame (every call seen in the training step's frame) MOSAIC solves 2/50 (Mc
 MOSAIC p = 7e-15), so the frame is what transfers the skills across levels. MOSAIC as in
 Section 5.8 fails where the scripted skills do not: friction ×0.5 0/50 and ×1.5 2/50, rise 0.10 m
 20/50, N = 5 21/50, sensor noise of 0.5 mm to 1 cm 0/50, whereas the scheduler with the scripted
-skills solves 50/50 at friction ×0.5 and ×1.5, mass ×0.7 and rise 0.10 m, and 40–46/50 under noise.
-These are learning failures, not physical limits.
+skills solves 50/50 at friction ×0.5 and ×1.5 and rise 0.10 m, and 40–46/50 under noise. These
+are learning failures, not physical limits. Mass ×0.7 is different: the scripted skills solve only
+23/50 there while the expert solves 50/50, so the skill controllers themselves, tuned at the
+nominal mass, do not transfer to lighter spheres.
 
 Changes, after a review of the literature on robust imitation:
 - Normalisation floor (`STD_FLOOR` = 0.01): the climb WAM's smallest feature standard deviation was
@@ -522,12 +528,15 @@ Variants, all chosen by validation success first and then compared on the held-o
 
 | Executors (WAM) | val. | nominal | noise 5 mm | fric ×0.5 | fric ×1.5 | mass ×0.7 | mass ×1.5 | rise 0.10 | rise 0.16 | N = 5 | N = 6 |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| MOSAIC (5.8) | 50 | 50 | 0 | 0 | 2 | 38 | 43 | 20 | 50 | 21 | 45 |
-| + floor | 50 | 50 | 14 | 37 | – | 37 | – | – | – | – | – |
+| MOSAIC (5.8) | 50 | 50 | 0 | 0 | 2 | 37 | 50 | 20 | 50 | 21 | 45 |
+| + floor | 50 | 50 | 14 | 37 | – | 30 | – | – | – | – | – |
 | + floor, noise | 50 | 50 | 38 | – | – | – | – | – | – | – | – |
-| + floor, noise, randomised (100 ep.) | 50 | 50 | 30 | 50 | 47 | 31 | 26 | 50 | 41 | 38 | 48 |
-| + floor, noise, randomised (300 ep.) | 49 | 42 | 42 | 38 | 43 | 34 | 50 | 50 | 47 | 40 | 44 |
-| **mix: 100 nominal + 300 randomised** | 50 | 50 | 38 | 50 | 46 | 21 | 50 | 50 | 47 | 48 | 48 |
+| + floor, noise, randomised (100 ep.) | 50 | 50 | 30 | 50 | 47 | 26 | 50 | 50 | 41 | 38 | 48 |
+| + floor, noise, randomised (300 ep.) | 49 | 42 | 42 | 38 | 43 | 4 | 49 | 50 | 47 | 40 | 44 |
+| **mix: 100 nominal + 300 randomised** | 50 | 50 | 38 | 50 | 46 | 6 | 46 | 50 | 47 | 48 | 48 |
+
+The mass columns were rerun after the `mj_setConst` fix (Section 7); on the same courses the
+scripted skills solve 23/50 at mass ×0.7 (50/50 at ×1.5) and the expert 50/50 at both.
 
 Randomised data alone costs nominal success (42/50 with 300 episodes); mixing it with the nominal
 chain data keeps it. The mix was selected on these held-out courses, so its numbers above are
@@ -541,8 +550,8 @@ both solve):
 | noise 5 mm | 49 | 0 | 42 | 0.039 (8–1) | 40/41, 3.8e-11, 0.57 | 4.5e-13 |
 | friction ×0.5 | 50 | 0 | 50 | 1 | 50/50, 1.8e-15, 0.55 | 1.8e-15 |
 | friction ×1.5 | 50 | 3 | 47 | 0.25 | 47/47, 1.4e-14, 0.55 | 1.1e-13 |
-| mass ×0.7 | 50 | 44 | 28 | 4.8e-7 (22–0) | 16/28, 0.57, 1.04 | 3.1e-5 (worse) |
-| mass ×1.5 | 47 | 44 | 50 | 0.25 | 47/47, 1.4e-14, 0.52 | 0.031 |
+| mass ×0.7 | 50 | 37 | 4 | 2.8e-14 (46–0) | 0/4, 0.12, 2.08 | 2.3e-10 (worse) |
+| mass ×1.5 | 50 | 50 | 47 | 0.25 (3–0) | 47/47, 1.4e-14, 0.50 | 0.25 (0–3) |
 | rise 0.10 m | 50 | 24 | 50 | 1 | 50/50, 1.8e-15, 0.60 | 3.0e-8 |
 | N = 5 | 50 | 41 | 48 | 0.5 | 43/48, 1.4e-8, 0.80 | 0.039 |
 | N = 6 | 48 | 45 | 48 | 1 | 46/46, 2.8e-14, 0.39 | 0.45 |
@@ -550,10 +559,53 @@ both solve):
 The robust MOSAIC keeps O1 (test seeds 200000–200049: 50/50 in 146.7 steps, faster on 50/50,
 p = 1.8e-15, ratio 0.59) and the nominal held-out result (50/50, ratio 0.55). It matches the expert's
 success, and is faster, in seven of the nine conditions; it stays below the expert under 5 mm
-noise (42 against 49) and loses to MOSAIC of Section 5.8 at mass ×0.7 (28 against 44). There the
-learned pull, executed on light spheres, sends the helper back off the edge: on 12 courses the
-scheduler issues 108 pulls (rescues) against 42 with the scripted skills. Mass is not observable
-from one state; an executor that infers it from its history (Section 9) is the next step.
+noise (42 against 49) and fails with spheres 30 % lighter (4 against 50, and 37 for MOSAIC of
+Section 5.8). At mass ×0.7 even the scripted skills solve only 23/50, so the pull and climb
+controllers, and the executors cloned from them, do not cover light spheres; the robust executors
+were moreover trained on randomised chain data generated before the `mj_setConst` fix
+(Section 7). Mass is not observable from one state; an executor that infers it from its history
+(Section 9) is the next step.
+
+**Energy-shaped pull.** Traces of the failing light-sphere courses show the cause: the scripted
+pull lifts the base at full force (6 N) until it is above the helper, so the base leaves the face
+at about 2.5 m/s, rises 26 cm above the platform and, through the link, drags the helper back off
+the edge; the scheduler then rescues the fallen sphere with another pull that fails the same way
+(12 pulls on one course). Scaling every force by the true mass ratio (dynamic similarity) cures it
+(20/20 on the held-out courses, scripted and learned skills), but an online least-squares estimate
+of the mass from free rolling (Vahidi et al., 2005), 3 % too high, brings MOSAIC back to 7/20: the
+full-lift pull works only within a few per cent of its nominal energy. The pull now meters the
+lift as an energy-based swing-up (Åström and Furuta, 2000): full lift until the base's specific
+energy relative to the helper, g Δz + |v|²/2, comes within a 2 cm ramp of a rest 0.25 m above the
+helper's centre, then no lift. Specific energy does not depend on the mass, so no estimate is
+needed. The height was chosen on the validation courses (300000–300024, scripted scheduler,
+heights 0.15–0.30 m above the helper's surface): with 0.25 m the scripted skills solve 25/25 at
+mass ×0.7 (12/25 with full lift), ×1 and ×1.5, and in fewer steps at nominal mass (254 against
+280). They also climb rises of 0.16 and 0.17 m (20/20 each; 0/50 at 0.16 m with full lift), not
+0.18 m. The expert keeps the full-lift pull, so every comparison with it is unchanged. The pull
+data of the two-sphere skill (`skills_shaped.py`, same starts and noise as Section 5.4) and both
+chain data sets (randomised, now with `mj_setConst`, and nominal) were regenerated with the
+energy-shaped pull and the robust recipe above was retrained unchanged (validation 50/50 in 144.6
+steps). That executor set was fixed before the test below, on fresh courses 600000–600049 never
+used before, against the expert and the robust MOSAIC above (McNemar, sign test as before):
+
+| Condition | Expert | Robust MOSAIC | + shaped pull | vs expert: McNemar p | faster, p, steps ratio | vs robust: p |
+|---|---|---|---|---|---|---|
+| nominal | 50 | 50 | 50 | 1 | 49/50, 9.1e-14, 0.56 | 1 |
+| noise 5 mm | 50 | 35 | 42 | 0.0078 (8–0) | 40/42, 4.1e-10, 0.57 | 0.12 (4–11) |
+| friction ×0.5 | 50 | 50 | 50 | 1 | 50/50, 1.8e-15, 0.55 | 1 |
+| friction ×1.5 | 50 | 42 | 50 | 1 | 49/50, 9.1e-14, 0.57 | 0.0078 (0–8) |
+| mass ×0.7 | 50 | 2 | **50** | 1 | 50/50, 1.8e-15, 0.61 | 7.1e-15 (0–48) |
+| mass ×1.5 | 50 | 47 | 44 | 0.031 (6–0) | 44/44, 1.1e-13, 0.51 | 0.38 (4–1) |
+| rise 0.10 m | 50 | 50 | 50 | 1 | 49/50, 9.1e-14, 0.61 | 1 |
+| N = 5 | 50 | 44 | 46 | 0.13 | 44/46, 3.1e-11, 0.72 | 0.73 |
+| N = 6 | 49 | 46 | 50 | 1 | 47/49, 4.4e-12, 0.40 | 0.13 |
+
+The scripted scheduler with the shaped pull solves 50/50 at mass ×0.7 and 49/50 at ×1.5 on these
+courses. MOSAIC with the shaped pull matches the expert's success in seven of nine conditions
+and is faster in all of them; it keeps O1 (test seeds 200000–200049: 50/50 in 141.6 steps against
+248.2, faster on 50/50, p = 1.8e-15, ratio 0.57). It stays below the expert under 5 mm of sensor
+noise (42/50) and with spheres 50 % heavier (44/50, 55 skill restarts, while the scripted skills
+solve 49/50), so these two are learning failures that remain.
 
 ## 6. Negative results and fixed defects
 
@@ -576,7 +628,8 @@ from one state; an executor that infers it from its history (Section 9) is the n
 | Waiting slots clipped by the side walls | two spheres sent to one slot, roll restarts | slots past a wall move to the other side |
 | Feature normalisation without a floor | sensor noise of 0.5 mm: MOSAIC 0/50 | near-constant features (std 6e-5) amplify noise; floor `STD_FLOOR` (+ noise augmentation: 38/50) |
 | Chain data with randomised dynamics only | nominal 50/50 → 42/50 (300 episodes) | nominal data diluted; mixed with the nominal chain data (50/50) |
-| Randomised mass with a history-free pull | mass ×0.7: 44/50 → 28/50 (fresh courses) | not solved; mass is not observable from one state |
+| Randomised mass with a history-free pull | mass ×0.7: 37/50 → 4/50 (fresh courses); scripted skills 23/50 | full-lift pull launches the base and drags a light helper off the edge; energy-shaped pull: 50/50 (Section 5.9) |
+| Online mass estimate (recursive least squares) and force scaling | mass ×0.7: MOSAIC 12/20 (oracle mass ratio 20/20, 3 % too high 7/20) | the full-lift pull tolerates only a few per cent of extra energy; replaced by the energy-shaped pull |
 
 ## 7. Threats to validity and limits
 
@@ -585,10 +638,15 @@ from one state; an executor that infers it from its history (Section 9) is the n
   randomised chain data); the effect models were not retrained on courses or randomised dynamics.
 - The robust executors were selected on the held-out courses 400000..; only the fresh courses
   500000–500049 (Section 5.9) are an unbiased test of that choice. One training seed per variant.
-- The mass conditions of Section 5.9 scaled masses and inertias without recomputing MuJoCo's
-  mass-derived constraint weights (`mj_setConst`), so they also changed contact and link softness
-  slightly; the randomised chain data used the same scaling. `perturb_dynamics` now recomputes
-  them; the mass results have not been rerun.
+- The first mass results of Section 5.9 scaled masses and inertias without recomputing MuJoCo's
+  mass-derived constraint weights (`mj_setConst`), which also changed contact and link softness.
+  `perturb_dynamics` and `skills_adapt.py` now recompute them and the mass conditions were rerun
+  (mass ×0.7: robust MOSAIC 28/50 → 4/50, scripted skills 50/50 → 23/50). The robust executors of
+  the 5.9 tables were trained on randomised chain data generated before the fix; the executors
+  with the energy-shaped pull were trained on regenerated data.
+- The energy-shaped pull height was tuned on validation courses with the scripted skills only;
+  the scripted-scheduler entries of `s4_50.pkl` now hold the shaped-pull run (146.0 steps); the
+  full-lift numbers of Section 5.7 are in its logs.
 - Several MPPI and RL results use 10–20 episodes; their intervals are wide (Section 5).
 - The model-comparison table measures the whole-task model out of its training distribution.
 - The skill cost functions are hand-written; their shaping may decide climb/pull success more than
@@ -631,6 +689,7 @@ author's machine and still need to be parametrised):
 | 5.8 chain data | `skills_chain.py` | collection 0–99 (round 0); validation 300000–300049 |
 | 5.8 MOSAIC | `skills_s4.py` (`courses=random`, modes `chain_wam`, `chain_bc512`), `skills_s4_stats.py NAME` | test 200000–200049; courses 300000.. (validation), 400000–400049 (held out) |
 | 5.9 robust executors | `skills_chain.py wam rounds=1 input_noise=0.005` (`tag=_noise`); `dynamics=1 rises=0.10,0.15 episodes=300 tag=_robust300`; `episodes=100 extra=wam_robust300 tag=_mix` | collection 0–299 |
+| 5.9 shaped pull | `skills_shaped.py`; `skills_chain.py wam rounds=1 dynamics=1 rises=0.10,0.15 episodes=300 input_noise=0.005 pull=shaped tag=_robust300e`, then `episodes=100 extra=wam_robust300e pull=shaped tag=_mixe`; `skills_adapt.py COND modes=expert,mosaic0,mosaic,script wam=chain_wam_mixe old=chain_wam_mix seed0=600000 tag=_shaped`, `skills_adapt_stats.py _shaped`; `skills_s4.py cuda 50 modes=chain_wam_mixe` (O1) | pull data as 5.4; collection 0–299; validation 300000..; fresh courses 600000–600049 |
 | 5.9 adaptability | `skills_adapt.py COND [wam=chain_wam_mix seed0=500000 modes=expert,mosaic0,mosaic tag=_confirm]`, `skills_adapt_stats.py _confirm`; `skills_s4.py cuda 50 modes=chain_wam_mix` (O1) | courses 400000–400049; fresh 500000–500049 |
 
 Whole-task pipeline: `uv run python -m modular_sphere.tools.train_swarm` (see `--help`).
@@ -640,7 +699,9 @@ Whole-task pipeline: `uv run python -m modular_sphere.tools.train_swarm` (see `-
 1. Replace the 128-unit cloned policy by the 512-unit one as the BC baseline and MPPI proposal;
    rerun the MPPI and self-imitation comparisons against it; self-imitation for roll.
 2. MPPI baseline: oracle-model ablation on climb; 50 episodes per skill.
-3. MOSAIC: adaptation from history for mass (an estimator of mass and friction from the last
+3. Heavy spheres (mass ×1.5: MOSAIC 44/50, scripted skills 49/50) and 5 mm sensor noise
+   (42/50): find which learned skill restarts; the climb could be metered by energy like the pull.
+4. MOSAIC: adaptation from history for mass (an estimator of mass and friction from the last
    steps, supervised with the simulator parameters, as in RMA or UP-OSI); a success head on the
    effect models to rank plans by feasibility as well as makespan (STAP); effect models trained on
    course data; why DAgger rounds collapse on chained executors (the scripted labeler latches lift
@@ -709,3 +770,8 @@ Whole-task pipeline: `uv run python -m modular_sphere.tools.train_swarm` (see `-
     Online System Identification* (UP-OSI). RSS 2017. arXiv:1702.02453.
 30. C. Agia, T. Migimatsu, J. Wu, J. Bohg. *STAP: Sequencing Task-Agnostic Policies*. ICRA 2023.
     arXiv:2210.12250.
+31. K. J. Åström, K. Furuta. *Swinging up a pendulum by energy control*. Automatica 36(2),
+    287–295, 2000.
+32. A. Vahidi, A. Stefanopoulou, H. Peng. *Recursive least squares with forgetting for online
+    estimation of vehicle mass and road grade: theory and experiments*. Vehicle System Dynamics
+    43(1), 31–55, 2005.

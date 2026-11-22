@@ -3,11 +3,13 @@
 
 import pickle
 import sys
+from pathlib import Path
 
 from scipy.stats import beta, binomtest
 
 name = sys.argv[1] if len(sys.argv) > 1 else "s4_50"
-r = pickle.load(open(f"/home/mcaniot/Documents/modular_sphere/data/swarm/skills/{name}.pkl", "rb"))
+root = Path(__file__).resolve().parents[3] / "data/swarm/skills"
+r = pickle.load(open(root / f"{name}.pkl", "rb"))
 
 
 def ci(k, n):

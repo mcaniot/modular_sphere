@@ -19,7 +19,7 @@ def main():
     for k in ("horizon", "epochs", "critic_warmup", "minibatch"):
         if k in kw:
             kw[k] = int(kw[k])
-    out = Path("/home/mcaniot/Documents/modular_sphere/data/swarm")
+    out = Path(__file__).resolve().parents[3] / "data/swarm"
     N = 4
     VAL = list(range(300_000, 300_020))
     ref = expert_steps(N, VAL)
@@ -48,10 +48,13 @@ def main():
         ev = evaluate(pol, ev_vec, VAL)
         speed = np.where(ev.success, ref / ev.steps, 0.0).mean()
         st = ev.steps[ev.success].mean() if ev.success.any() else float("nan")
-        print(f"{tag} it={it + 1} h={state['h']:.2f} train succ {m['success']:.2f} "
-              f"len {m['length']:.0f} std {m['std']:.2f} | val(h=0.15) {ev.success.sum()}/20, "
-              f"steps {st:.0f}, speed {speed:.3f}, moving {ev.moving.mean():.2f}, "
-              f"links {ev.links.mean():.2f} ({time.time() - state['t0']:.0f}s)", flush=True)
+        print(
+            f"{tag} it={it + 1} h={state['h']:.2f} train succ {m['success']:.2f} "
+            f"len {m['length']:.0f} std {m['std']:.2f} | val(h=0.15) {ev.success.sum()}/20, "
+            f"steps {st:.0f}, speed {speed:.3f}, moving {ev.moving.mean():.2f}, "
+            f"links {ev.links.mean():.2f} ({time.time() - state['t0']:.0f}s)",
+            flush=True,
+        )
         state["t0"] = time.time()
         pol.save(str(out / f"{tag}_last.pt"))
         if speed > state["best"]:

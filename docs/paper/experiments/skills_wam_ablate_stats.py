@@ -5,10 +5,11 @@ Usage: uv run --with scipy python skills_wam_ablate_stats.py [skill=climb]
 
 import pickle
 import sys
+from pathlib import Path
 
 from scipy.stats import binomtest
 
-root = "/home/mcaniot/Documents/modular_sphere/data/swarm/skills"
+root = str(Path(__file__).resolve().parents[3] / "data/swarm/skills")
 name = sys.argv[1] if len(sys.argv) > 1 else "climb"
 ref = pickle.load(open(f"{root}/wam_eval_{name}_50.pkl", "rb"))
 abl = pickle.load(open(f"{root}/wam_ablate_{name}_50.pkl", "rb"))

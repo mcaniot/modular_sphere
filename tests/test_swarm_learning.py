@@ -1,13 +1,18 @@
+import dataclasses
+import json
+import sys
+
 import numpy as np
 import pytest
 
-from modular_sphere.swarm_data import SwarmDataset, collect
+from modular_sphere.swarm_data import SwarmDataset, collect, run_episodes
 
 torch = pytest.importorskip("torch")
 
 from modular_sphere.swarm_torch import (  # noqa: E402
     SwarmPolicy,
     SwarmWorldModel,
+    _bernoulli_kl,
     evaluate_policy,
     evaluate_world_model,
     improve_in_imagination,
@@ -15,6 +20,12 @@ from modular_sphere.swarm_torch import (  # noqa: E402
     local_obs,
     task_reward,
 )
+from modular_sphere.tools import train_swarm as ts  # noqa: E402
+
+# smallest end-to-end pipeline without DAgger
+TINY = dict(n_spheres=2, episodes=4, val_episodes=1, wm_epochs=1, bc_epochs=1, dagger_betas=(),
+            explore_episodes=1, ppo_iterations=1, eval_episodes=1, select_episodes=1, hidden=16,
+            ensemble=1, device="cpu")  # fmt: skip
 
 
 @pytest.fixture(scope="module")
@@ -63,14 +74,12 @@ def test_world_model_policy_and_imagination_pipeline(data, tmp_path):
     assert wm.train_losses[-1] < wm.train_losses[0]
     report = evaluate_world_model(wm, data, [1, 5], stride=50)
     assert set(report) == {1, 5} and 0 <= report[1]["link_acc"] <= 1
-    pred, links = wm.rollout(data.spheres[:2, 0], data.links[:2, 0], data.actions[:2, :6])
+    args = (data.spheres[:2, 0], data.links[:2, 0], data.actions[:2, :6])
+    pred, links = wm.rollout(*args)
     assert pred.shape == (2, 6, 2, 9) and links.shape == (2, 6, 2, 2)
     wm.save(str(tmp_path / "wm.pt"))
     np.testing.assert_allclose(
-        SwarmWorldModel.load(str(tmp_path / "wm.pt"), "cpu").rollout(
-            data.spheres[:2, 0], data.links[:2, 0], data.actions[:2, :6]
-        )[0],
-        pred,
+        SwarmWorldModel.load(str(tmp_path / "wm.pt"), "cpu").rollout(*args)[0], pred
     )
     policy = SwarmPolicy(2, hidden=32, epochs=2, device="cpu")
     policy.fit(data)
@@ -108,27 +117,20 @@ def test_dagger_collection_uses_the_learner(data):
 
 
 def test_mcnemar_exact():
-    from modular_sphere.tools.train_swarm import mcnemar
-
     a = np.array([True] * 5 + [False] * 5)
-    assert mcnemar(a, a) == {"p_value": 1.0, "only_a": 0, "only_b": 0}
-    res = mcnemar(np.zeros(6, bool), np.ones(6, bool))
+    assert ts.mcnemar(a, a) == {"p_value": 1.0, "only_a": 0, "only_b": 0}
+    res = ts.mcnemar(np.zeros(6, bool), np.ones(6, bool))
     assert res["only_b"] == 6 and res["p_value"] == pytest.approx(2 / 64)
 
 
 def test_train_swarm_cli(tmp_path, monkeypatch):
-    import json
-    import sys
-
-    from modular_sphere.tools import train_swarm
-
     argv = ["train_swarm", "--out-dir", str(tmp_path), "--spheres", "2", "--episodes", "4",
             "--val-episodes", "1", "--wm-epochs", "1", "--bc-epochs", "1", "--dagger-betas", "0.5",
             "--dagger-episodes", "1", "--explore-episodes", "1", "--ppo-iterations", "2",
             "--ppo-chunk", "1", "--eval-episodes", "1", "--select-episodes", "1",
             "--hidden", "16", "--device", "cpu", "--ensemble", "2"]  # fmt: skip
     monkeypatch.setattr(sys, "argv", argv)
-    train_swarm.main()
+    ts.main()
     report = json.loads((tmp_path / "report.json").read_text())
     assert set(report["policies"]) == {"bc", "dagger", "ppo"}
     assert [r["iteration"] for r in report["ppo_log"]] == [1, 2]
@@ -139,12 +141,7 @@ def test_train_swarm_cli(tmp_path, monkeypatch):
 
 
 def test_train_swarm_without_dagger_compares_bc(tmp_path):
-    from modular_sphere.tools.train_swarm import train_swarm
-
-    report = train_swarm(tmp_path, n_spheres=2, episodes=4, val_episodes=1, wm_epochs=1,
-                         bc_epochs=1, dagger_betas=(), explore_episodes=1,
-                         ppo_iterations=1, eval_episodes=1, select_episodes=1,
-                         hidden=16, ensemble=1, device="cpu")  # fmt: skip
+    report = ts.train_swarm(tmp_path, **TINY)
     assert set(report["policies"]) == {"bc", "ppo"}
     assert "mcnemar_bc_vs_ppo" in report
 
@@ -175,15 +172,11 @@ def test_ppo_in_world_model_ensemble(data):
 
 
 def test_bernoulli_kl_is_finite_when_saturated():
-    from modular_sphere.swarm_torch import _bernoulli_kl
-
     kl = _bernoulli_kl(torch.tensor([0.0, 50.0, 3.0]), torch.tensor([0.0, -200.0, 3.0]))
     assert torch.isfinite(kl).all() and kl[0] == 0 and kl[2] == 0 and kl[1] > 100
 
 
 def test_train_swarm_keeps_the_best_ppo_chunk(tmp_path, monkeypatch):
-    from modular_sphere.tools import train_swarm as ts
-
     speeds = iter([0.9, 0.1])  # DAgger start, then a worse PPO chunk
     real = ts._summary
 
@@ -192,12 +185,22 @@ def test_train_swarm_keeps_the_best_ppo_chunk(tmp_path, monkeypatch):
         return {**out, "speed_vs_expert": next(speeds, out["speed_vs_expert"])}
 
     monkeypatch.setattr(ts, "_summary", summary)
-    report = ts.train_swarm(tmp_path, n_spheres=2, episodes=4, val_episodes=1, wm_epochs=1,
-                            bc_epochs=1, dagger_betas=(), explore_episodes=1, ppo_iterations=1,
-                            eval_episodes=1, select_episodes=1, hidden=16, ensemble=1,
-                            device="cpu")  # fmt: skip
+    report = ts.train_swarm(tmp_path, **TINY)
     assert report["ppo_log"][0]["select_speed"] == 0.1
     bc = ts.SwarmPolicy.load(str(tmp_path / "bc.pt"), "cpu")
     ppo = ts.SwarmPolicy.load(str(tmp_path / "ppo.pt"), "cpu")
     assert all(torch.equal(a, b) for a, b in zip(
         bc.net.state_dict().values(), ppo.net.state_dict().values(), strict=True))  # fmt: skip
+
+
+def test_edge_cases_raise_or_type(data, tmp_path):
+    t = 4  # episodes shorter than the training window: no window, no silent wrap-around
+    short = dataclasses.replace(data, spheres=data.spheres[:, : t + 1],
+                                links=data.links[:, : t + 1], actions=data.actions[:, :t],
+                                valid=data.valid[:, :t])  # fmt: skip
+    with pytest.raises(ValueError):
+        SwarmWorldModel(window=8, epochs=1, hidden=16, device="cpu").fit(short)
+    with pytest.raises(ValueError):
+        ts.train_swarm(tmp_path, **{**TINY, "select_episodes": 0})
+    success, steps, arrived = run_episodes(lambda obs: {}, 2, [])
+    assert (success.dtype, steps.dtype, arrived.dtype) == (bool, np.int64, np.int64)

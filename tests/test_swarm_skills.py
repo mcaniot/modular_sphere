@@ -1,12 +1,14 @@
+import mujoco
 import numpy as np
 import pytest
 
-from modular_sphere.swarm import STEP_H, SphereSwarmStepEnv
+from modular_sphere.swarm import GRAVITY, STEP_H, SphereSwarmStepEnv, SwarmClimbPolicy, obs_slices
 
 torch = pytest.importorskip("torch")
 
 from modular_sphere.swarm_skills import (  # noqa: E402
     MAX_SKILL_STEPS,
+    SKILL_AGENTS,
     SKILLS,
     STD_FLOOR,
     SkillCall,
@@ -30,8 +32,7 @@ from modular_sphere.swarm_wam import (  # noqa: E402
 
 
 def _calls(name, d):
-    ag = (0,) if name == "roll" else (0, 1)
-    return [SkillCall(name, ag, t) for t in d.target]
+    return [SkillCall(name, SKILL_AGENTS[name], t) for t in d.target]
 
 
 @pytest.fixture(scope="module")
@@ -45,6 +46,7 @@ def test_skill_controllers_reach_their_termination_event(name):
     assert d.success.all() and (d.steps < MAX_SKILL_STEPS).all()
     assert d.data.spheres.shape == (2, MAX_SKILL_STEPS + 1, 2, 9)
     assert (d.data.valid.sum(1) == d.steps).all()
+    np.testing.assert_allclose(d.data.goal[:, :2], 10.0)  # the parked goal is recorded
     if name != "roll":
         assert d.data.links.any()  # climb and pull link the two spheres
 
@@ -112,6 +114,41 @@ def test_prior_value_and_planner(climb, tmp_path):
         a = planner.act(spheres, links)
         assert a.shape == (2, 4) and np.isin(a[:, 3], (-1.0, 1.0)).all()
         assert np.abs(a[:, :3]).max() <= 1.0
+
+
+def test_pump_meters_the_lift_by_specific_energy():
+    ex, sl = SwarmClimbPolicy(2), obs_slices(2)
+    holder, lifter = np.zeros(sl["others"].stop), np.zeros(sl["others"].stop)
+    holder[sl["pos"]] = (0.0, 0.0, 0.25)
+    lifter[sl["pos"]] = (-0.2, 0.0, 0.1)
+    assert ex._pump(lifter, holder) == 1.0  # below the holder, at rest: full lift
+    lifter[sl["pos"]] = (0.0, 0.0, 0.25 + ex.PULL_HEIGHT)
+    assert ex._pump(lifter, holder) == 0.0  # at the target height
+    lifter[sl["pos"]] = (-0.2, 0.0, 0.25)
+    lifter[sl["vel"]] = (np.sqrt(2 * GRAVITY * ex.PULL_HEIGHT), 0.0, 0.0)
+    assert ex._pump(lifter, holder) == pytest.approx(0.0, abs=1e-9)  # enough kinetic energy
+
+
+def test_shaped_pull_leaves_light_spheres_on_the_platform():
+    env = SphereSwarmStepEnv(n_spheres=2, max_steps=MAX_SKILL_STEPS + 60)
+    body = env.model.body_mass > 0
+    env.model.body_mass[body] *= 0.7  # 30 % lighter: full lift dragged the helper off the edge
+    env.model.body_inertia[body] *= 0.7
+    mujoco.mj_setConst(env.model, env.data)
+    env.reset(seed=0)
+    start, target = sample_start("pull", np.random.default_rng(0), env.radius)
+    place(env, start)
+    ctrl = SkillController(SkillCall("pull", SKILL_AGENTS["pull"], target), 2, env.radius)
+    obs, agents = env._observations(), env.possible_agents
+    for _ in range(MAX_SKILL_STEPS):
+        obs, *_ = env.step(dict(zip(agents, ctrl.act([obs[a] for a in agents]), strict=True)))
+        x = env.spheres()
+        if ctrl.done(x[:, :3], x[:, 3:6]):
+            break
+    assert ctrl.done(x[:, :3], x[:, 3:6])
+    for _ in range(40):  # both settle on the platform
+        env.step({a: np.zeros(4) for a in agents})
+    np.testing.assert_allclose(env.spheres()[:, 2], STEP_H + env.radius, atol=0.01)
 
 
 def test_skill_controller_done_events():

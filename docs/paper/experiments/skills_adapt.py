@@ -2,14 +2,17 @@
 out-of-distribution conditions (rises, swarm size, mass, friction, observation noise).
 
 Usage: skills_adapt.py CONDITION [modes=expert,script,mosaic,mosaic0] [seeds=50] [seed0=400000]
-[wam=chain_wam] [tag=]; mosaic: executors {wam}_r0_*, mosaic0: chain_wam_r0_* (MOSAIC before).
+[wam=chain_wam] [old=chain_wam] [tag=]; mosaic: executors {wam}_r0_*, mosaic0: {old}_r0_*
+(MOSAIC before).
 Saves data/swarm/skills/adapt_{CONDITION}.pkl {mode: {success, steps, restarts}} (per seed).
 """
 
 import pickle
 import sys
 from dataclasses import replace
+from pathlib import Path
 
+import mujoco
 import numpy as np
 
 from modular_sphere.swarm import (
@@ -24,7 +27,7 @@ from modular_sphere.swarm_plan import EffectModel, SkillScheduler, script_execut
 from modular_sphere.swarm_skills import SKILLS, SkillValue
 from modular_sphere.swarm_wam import SkillWAM
 
-root = "/home/mcaniot/Documents/modular_sphere/data/swarm/skills"
+root = str(Path(__file__).resolve().parents[3] / "data/swarm/skills")
 cond = sys.argv[1]
 kw = dict(a.split("=") for a in sys.argv[2:])
 modes = kw.get("modes", "expert,script,mosaic").split(",")
@@ -33,7 +36,7 @@ seeds = list(range(seed0, seed0 + int(kw.get("seeds", "50"))))
 effect = EffectModel({s: SkillValue.load(f"{root}/value_{s}.pt") for s in SKILLS})
 wam = kw.get("wam", "chain_wam")  # executor files {wam}_r0_{skill}.pt
 wams = {s: SkillWAM.load(f"{root}/{wam}_r0_{s}.pt") for s in SKILLS}
-old = {s: SkillWAM.load(f"{root}/chain_wam_r0_{s}.pt") for s in SKILLS}  # mode mosaic0
+old = {s: SkillWAM.load(f"{root}/{kw.get('old', 'chain_wam')}_r0_{s}.pt") for s in SKILLS}
 out = cond + kw.get("tag", "")
 
 n, mass, fric, noise, rise = 4, 1.0, 1.0, 0.0, None
@@ -78,9 +81,10 @@ for seed in seeds:
         env.model.body_mass[body] *= mass
         env.model.body_inertia[body] *= mass
         env.model.geom_friction[:, 0] *= fric
+        mujoco.mj_setConst(env.model, env.data)  # mass-derived constants, as perturb_dynamics
         obs, _ = env.reset(seed=seed)
         ctl = controller(mode, course)
-        sp = np.concatenate(env._kinematics(), 1)
+        sp = env.spheres()
         if mode != "expert":
             ctl.reset(sp[:, :3], env.goal, course)
         t, info = 0, {}
@@ -95,7 +99,7 @@ for seed in seeds:
                 act = dict(zip(env.possible_agents, a, strict=True))
             obs, _, _, _, infos = env.step(act)
             info, t = infos[env.possible_agents[0]], t + 1
-            sp = np.concatenate(env._kinematics(), 1)
+            sp = env.spheres()
         res[mode]["success"].append(bool(info["is_success"]))
         res[mode]["steps"].append(t)
         res[mode]["restarts"].append(0 if mode == "expert" else ctl.restarts)

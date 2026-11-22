@@ -2,16 +2,16 @@
 
 import pickle
 import sys
+from pathlib import Path
 
 import numpy as np
-
-from modular_sphere.swarm_data import SwarmDataset
 import torch
 
+from modular_sphere.swarm_data import SwarmDataset
 from modular_sphere.swarm_skills import SKILLS, SkillCall, SkillPrior, SkillValue, skill_features
 
 device = sys.argv[1]
-root = "/home/mcaniot/Documents/modular_sphere/data/swarm/skills"
+root = str(Path(__file__).resolve().parents[3] / "data/swarm/skills")
 for name in SKILLS:
     data = SwarmDataset.load(f"{root}/{name}_train.npz")
     with open(f"{root}/{name}_outcomes.pkl", "rb") as f:
@@ -40,5 +40,8 @@ for name in SKILLS:
             true = n - np.arange(n) if val.success[e] else np.full(n, 200.0)
             err.append(pred - true)
     err = np.concatenate(err)
-    print(f"{name}: value loss {losses[0]:.4f} -> {losses[-1]:.4f}; val steps-to-go MAE "
-          f"{np.abs(err).mean():.1f}, RMSE {np.sqrt((err ** 2).mean()):.1f}", flush=True)
+    print(
+        f"{name}: value loss {losses[0]:.4f} -> {losses[-1]:.4f}; val steps-to-go MAE "
+        f"{np.abs(err).mean():.1f}, RMSE {np.sqrt((err**2).mean()):.1f}",
+        flush=True,
+    )

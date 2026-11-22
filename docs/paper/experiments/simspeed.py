@@ -28,5 +28,8 @@ for seed in range(5):
         moving.append(np.mean([np.linalg.norm(o[vel][:2]) > 0.05 for o in obs.values()]))
         links.append(next(iter(info.values()))["n_links"])
         steps += 1
-    print(f"expert seed {seed}: {steps} steps, moving frac {np.mean(moving):.2f}, "
-          f"link-steps {np.mean(links):.2f}", flush=True)
+    print(
+        f"expert seed {seed}: {steps} steps, moving frac {np.mean(moving):.2f}, "
+        f"link-steps {np.mean(links):.2f}",
+        flush=True,
+    )

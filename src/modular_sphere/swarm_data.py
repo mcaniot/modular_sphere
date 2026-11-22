@@ -84,8 +84,16 @@ def empty_arrays(n_episodes: int, horizon: int, n_spheres: int, obs_dim: int) ->
     }
 
 
-def _stack(obs: ObsDict, agents: list[str]) -> Array:
+def stack_obs(obs: ObsDict, agents: list[str]) -> Array:
     return np.stack([obs[a] for a in agents])
+
+
+def record(out: dict[str, Array], env: SphereSwarmStepEnv, e: int, t: int, obs: ObsDict) -> None:
+    """Write the current states, links and observations from step ``t`` of episode ``e`` on (the
+    tail stays filled with the last state)."""
+    out["spheres"][e, t:] = env.spheres()
+    out["links"][e, t:] = env.links
+    out["obs"][e, t:] = stack_obs(obs, env.possible_agents)
 
 
 def collect(
@@ -108,27 +116,22 @@ def collect(
     rng = np.random.default_rng(seed)
     out = empty_arrays(n_episodes, horizon, n_spheres, env.slices["others"].stop)
 
-    def record(e: int, t: int, obs: ObsDict) -> None:
-        out["spheres"][e, t:] = np.concatenate(env._kinematics(), axis=1)
-        out["links"][e, t:] = env.links
-        out["obs"][e, t:] = _stack(obs, agents)
-
     for e in range(n_episodes):
         obs, _ = env.reset(seed=seed + e)
         expert.reset()
         out["goal"][e] = env.goal
-        record(e, 0, obs)
+        record(out, env, e, 0, obs)
         t = 0
         hold = np.zeros(n_spheres, dtype=int)
         explore = np.zeros(n_spheres, dtype=bool)
         random_act = np.zeros((n_spheres, ACT_DIM))
         while env.agents:
-            label = _stack(expert.act(obs), agents)
+            label = stack_obs(expert.act(obs), agents)
             if policy is None or rng.random() < beta:
                 executed = label.copy()
                 executed[:, :3] += noise * rng.standard_normal((n_spheres, 3))
             else:
-                executed = _stack(policy(obs), agents)
+                executed = stack_obs(policy(obs), agents)
             if random_prob > 0:  # held random actions (module docstring)
                 new = hold <= 0
                 hold[new] = rng.integers(5, 21, new.sum())
@@ -143,21 +146,31 @@ def collect(
             out["rewards"][e, t], out["valid"][e, t] = rewards[agents[0]], True
             out["success"][e] = terms[agents[0]]
             t += 1
-            record(e, t, obs)
+            record(out, env, e, t, obs)
     return SwarmDataset(**out)
+
+
+def run_episodes(policy: Policy, n_spheres: int, seeds: list[int],
+                 reset: Callable[[], None] | None = None) -> tuple[Array, ...]:  # fmt: skip
+    """Closed-loop MuJoCo episodes, one per seed (``reset`` before each): success, steps and
+    number of arrived spheres per seed."""
+    env = SphereSwarmStepEnv(n_spheres=n_spheres)
+    success, steps, arrived = [], [], []
+    for seed in seeds:
+        obs, _ = env.reset(seed=seed)
+        if reset is not None:
+            reset()
+        t, info = 0, {}
+        while env.agents:
+            obs, _, _, _, infos = env.step(policy(obs))
+            info, t = infos[env.possible_agents[0]], t + 1
+        success.append(info["is_success"])
+        steps.append(t)
+        arrived.append(info["n_arrived"])
+    return np.array(success, bool), np.array(steps, np.int64), np.array(arrived, np.int64)
 
 
 def expert_steps(n_spheres: int, seeds: list[int]) -> NDArray[np.int64]:
     """Episode length of the scripted expert per seed: the time reference of the speed objective."""
-    env = SphereSwarmStepEnv(n_spheres=n_spheres)
-    expert = SwarmClimbPolicy(n_spheres, env.radius)
-    steps = []
-    for seed in seeds:
-        obs, _ = env.reset(seed=seed)
-        expert.reset()
-        t = 0
-        while env.agents:
-            obs, *_ = env.step(expert.act(obs))
-            t += 1
-        steps.append(t)
-    return np.array(steps)
+    expert = SwarmClimbPolicy(n_spheres)
+    return run_episodes(expert.act, n_spheres, seeds, expert.reset)[1]

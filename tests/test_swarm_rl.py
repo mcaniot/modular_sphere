@@ -4,7 +4,7 @@ import threading
 import numpy as np
 import pytest
 
-from modular_sphere.swarm import SphereSwarmStepEnv
+from modular_sphere.swarm import obs_slices
 
 torch = pytest.importorskip("torch")
 
@@ -14,7 +14,7 @@ from modular_sphere.swarm_torch import SwarmPolicy  # noqa: E402
 
 def _policy(n):
     policy = SwarmPolicy(n, hidden=16, device="cpu")
-    dim = SphereSwarmStepEnv(n_spheres=n).slices["others"].stop
+    dim = obs_slices(n)["others"].stop
     policy.stats = {"mean": torch.zeros(dim), "std": torch.ones(dim)}
     return policy
 
@@ -66,5 +66,7 @@ def test_vec_env_evaluate_and_mappo():
         assert np.isnan(log[0]["success"]) and log[0]["episodes"] == 0
         assert -3.0 <= np.log(log[-1]["std"]) <= 0.0
         assert len(train_mappo(policy, vec, iterations=1, horizon=4, hidden=16)) == 1
+        with pytest.raises(ValueError):
+            evaluate(policy, vec, [])
     finally:
         vec.close()

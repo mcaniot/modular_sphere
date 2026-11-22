@@ -21,6 +21,7 @@ attach when the logit is positive) and also measures how many spheres move at th
 
 from __future__ import annotations
 
+import contextlib
 import multiprocessing as mp
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -32,11 +33,11 @@ import torch
 from numpy.typing import NDArray
 from torch import nn
 
-from modular_sphere.swarm import SphereSwarmStepEnv, obs_slices
+from modular_sphere.swarm import SphereSwarmStepEnv, moving_fraction, obs_slices
+from modular_sphere.swarm_data import stack_obs
 from modular_sphere.swarm_torch import SwarmPolicy, _mlp, _ppo_dist
 
 Array = NDArray[np.float64]
-MOVING_SPEED = 0.05  # a sphere moves when its horizontal speed exceeds this [m/s]
 TRAIN_SEED = 1_000_000  # first reset seed of worker 0; worker w starts at TRAIN_SEED * (w + 1)
 
 
@@ -54,9 +55,6 @@ def _worker(conn: Connection, n_spheres: int, k: int, seed: int, time_penalty: f
     def state(env: SphereSwarmStepEnv) -> Array:
         return np.append(env.state(), env._steps / env.max_steps)
 
-    def stack(obs: dict[str, Array]) -> Array:
-        return np.stack([obs[a] for a in agents])
-
     obs = [np.zeros(0)] * k
     done = np.zeros(k, dtype=bool)
     auto = True
@@ -71,7 +69,7 @@ def _worker(conn: Connection, n_spheres: int, k: int, seed: int, time_penalty: f
                 else:
                     seeds_i = seeds[i]
                 done[i] = seeds_i is None  # padding slot: reset, then never stepped
-                obs[i] = stack(env.reset(seed=0 if done[i] else seeds_i)[0])
+                obs[i] = stack_obs(env.reset(seed=0 if done[i] else seeds_i)[0], agents)
             conn.send((np.stack(obs), np.stack([state(e) for e in envs])))
         elif cmd == "step":
             out = {key: np.zeros(k) for key in ("reward", "term", "trunc", "arrived", "links")}
@@ -91,7 +89,7 @@ def _worker(conn: Connection, n_spheres: int, k: int, seed: int, time_penalty: f
                         seed += 1
                     else:
                         done[i] = True
-                obs[i] = stack(o)
+                obs[i] = stack_obs(o, agents)
             out["done"] = done.copy()
             conn.send((np.stack(obs), np.stack([state(e) for e in envs]), final, out))
         elif cmd == "height":
@@ -146,9 +144,14 @@ class SwarmVecEnv:
 
     def close(self) -> None:
         for conn in self._conns:
-            conn.send(("close", None))
+            with contextlib.suppress(BrokenPipeError, OSError):  # worker already gone
+                conn.send(("close", None))
+            conn.close()
         for proc in self._procs:
             proc.join(timeout=5)
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=1)
 
 
 @dataclass
@@ -159,15 +162,10 @@ class RLEval:
     links: Array  # mean number of active links, per seed
 
 
-@torch.no_grad()
-def _act(policy: SwarmPolicy, obs: Array) -> Array:
-    out = policy.net(policy._t(obs), policy.stats).cpu().numpy().astype(np.float64)
-    out[..., 3] = np.where(out[..., 3] > 0, 1.0, -1.0)
-    return out
-
-
 def evaluate(policy: SwarmPolicy, vec: SwarmVecEnv, seeds: list[int]) -> RLEval:
     """Deterministic closed-loop episodes on ``seeds`` (batches of ``vec.num_envs``)."""
+    if not seeds:
+        raise ValueError("seeds must not be empty")
     vel = obs_slices(vec.n)["vel"]
     res: dict[str, list[Any]] = {"success": [], "steps": [], "moving": [], "links": []}
     for b in range(0, len(seeds), vec.num_envs):
@@ -178,9 +176,9 @@ def evaluate(policy: SwarmPolicy, vec: SwarmVecEnv, seeds: list[int]) -> RLEval:
         steps, success = np.zeros(m, np.int64), np.zeros(m, bool)
         moving, links = np.zeros(m), np.zeros(m)
         while active.any():
-            moves = np.linalg.norm(obs[:m, :, vel][..., :2], axis=-1) > MOVING_SPEED
-            obs, _, _, info = vec.step(_act(policy, obs))
-            moving += active * moves.mean(-1)
+            moves = moving_fraction(obs[:m, :, vel])
+            obs, _, _, info = vec.step(policy.act(obs))
+            moving += active * moves
             links += active * info["links"][:m]
             steps += active
             success |= active & (info["term"][:m] > 0)
@@ -221,8 +219,8 @@ def train_mappo(
     dev, n = policy.device, vec.n
     obs, state = vec.reset()
     critic = _mlp(state.shape[1], 1, hidden).to(dev)
-    std = nn.Parameter(torch.full((3,), log_std, device=dev))
-    actor_opt = torch.optim.Adam([*policy.net.parameters(), std], lr=lr)
+    log_std_p = nn.Parameter(torch.full((3,), log_std, device=dev))
+    actor_opt = torch.optim.Adam([*policy.net.parameters(), log_std_p], lr=lr)
     critic_opt = torch.optim.Adam(critic.parameters(), lr=critic_lr)
 
     def value(s: torch.Tensor) -> torch.Tensor:
@@ -239,13 +237,13 @@ def train_mappo(
         with torch.no_grad():
             for _ in range(horizon):
                 o = t(obs)
-                normal, bern = _ppo_dist(policy, o, std)
+                normal, bern = _ppo_dist(policy.net(o, policy.stats), log_std_p)
                 cont, att = normal.sample(), bern.sample()
                 logp = normal.log_prob(cont).sum(-1) + bern.log_prob(att)
                 act = torch.cat([cont, att[..., None] * 2 - 1], -1).cpu().numpy()
                 obs_next, state_next, final, info = vec.step(act.astype(np.float64))
                 term, trunc = info["term"] > 0, info["trunc"] > 0
-                next_v = value(t(final)).cpu().numpy() * ~term  # time-outs bootstrap
+                next_v = value(t(final)).cpu().numpy() * ~term  # bootstrap all but terminations
                 ep_len += 1
                 for i in np.flatnonzero(term | trunc):
                     lengths.append(ep_len[i])
@@ -259,9 +257,6 @@ def train_mappo(
             states = torch.stack(buf["state"])  # (T, E, S)
             v = value(states).cpu().numpy()
             rew, nv, done = np.stack(buf["rew"]), np.stack(buf["nv"]), np.stack(dones)
-            # Bootstrap the rollout end and continuing steps with V(next state).
-            v_next = np.concatenate([v[1:], value(t(state)).cpu().numpy()[None]])
-            nv = np.where(done, nv, v_next)
             adv, gae = np.zeros_like(rew), np.zeros(vec.num_envs)
             for k in reversed(range(horizon)):
                 delta = rew[k] + gamma * nv[k] - v[k]
@@ -284,7 +279,7 @@ def train_mappo(
                 count += 1
                 if it < critic_warmup:
                     continue
-                normal, bern = _ppo_dist(policy, o_all[idx], std)
+                normal, bern = _ppo_dist(policy.net(o_all[idx], policy.stats), log_std_p)
                 a = a_all[idx]
                 logp = normal.log_prob(a[..., :3]).sum(-1) + bern.log_prob(a[..., 3])
                 ratio = (logp - lp_all[idx]).exp()  # per agent, (B, N)
@@ -294,17 +289,17 @@ def train_mappo(
                 loss = -(surr + entropy_weight * ent).mean()
                 actor_opt.zero_grad(set_to_none=True)
                 loss.backward()
-                nn.utils.clip_grad_norm_([*policy.net.parameters(), std], 1.0)
+                nn.utils.clip_grad_norm_([*policy.net.parameters(), log_std_p], 1.0)
                 actor_opt.step()
                 with torch.no_grad():
-                    std.clamp_(min=-3.0, max=0.0)
+                    log_std_p.clamp_(min=-3.0, max=0.0)
                 stats["clip_frac"] += ((ratio - 1).abs() > clip).float().mean().item()
         metrics = {
             "reward": float(rew.mean()),
             "episodes": float(len(lengths)),
             "success": float(np.mean(wins)) if wins else float("nan"),
             "length": float(np.mean(lengths)) if lengths else float("nan"),
-            "std": float(std.detach().exp().mean()),
+            "std": float(log_std_p.detach().exp().mean()),
             "critic": stats["critic"] / count,
             "clip_frac": stats["clip_frac"] / count,
         }

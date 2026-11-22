@@ -19,7 +19,7 @@ def main():
     for k in ("horizon", "epochs", "critic_warmup", "minibatch"):
         if k in kw:
             kw[k] = int(kw[k])
-    out = Path("/home/mcaniot/Documents/modular_sphere/data/swarm")
+    out = Path(__file__).resolve().parents[3] / "data/swarm"
     N = 4
     VAL = list(range(300_000, 300_020))
     ref = expert_steps(N, VAL)
@@ -30,8 +30,11 @@ def main():
     def show(name, ev):
         speed = np.where(ev.success, ref / ev.steps, 0.0).mean()
         st = ev.steps[ev.success].mean() if ev.success.any() else float("nan")
-        print(f"{name}: val {ev.success.sum()}/20, steps {st:.0f}, speed {speed:.3f}, "
-              f"moving {ev.moving.mean():.2f}, links {ev.links.mean():.2f}", flush=True)
+        print(
+            f"{name}: val {ev.success.sum()}/20, steps {st:.0f}, speed {speed:.3f}, "
+            f"moving {ev.moving.mean():.2f}, links {ev.links.mean():.2f}",
+            flush=True,
+        )
         return speed
 
     best = [show(f"{tag} dagger", evaluate(pol, ev_vec, VAL))]
@@ -40,10 +43,12 @@ def main():
     def cb(it, m):
         if (it + 1) % every:
             return
-        sp = show(f"{tag} it={it + 1} rew {m['reward']:.4f} train succ {m['success']:.2f} "
-                  f"len {m['length']:.0f} std {m['std']:.2f} critic {m['critic']:.4f} "
-                  f"clip {m['clip_frac']:.3f} ({time.time() - t0[0]:.0f}s)",
-                  evaluate(pol, ev_vec, VAL))
+        sp = show(
+            f"{tag} it={it + 1} rew {m['reward']:.4f} train succ {m['success']:.2f} "
+            f"len {m['length']:.0f} std {m['std']:.2f} critic {m['critic']:.4f} "
+            f"clip {m['clip_frac']:.3f} ({time.time() - t0[0]:.0f}s)",
+            evaluate(pol, ev_vec, VAL),
+        )
         t0[0] = time.time()
         if sp >= best[0]:
             best[0] = sp

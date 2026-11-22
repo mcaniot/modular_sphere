@@ -53,11 +53,14 @@ STEP_X = 0.5  # step face [m]
 STEP_H = 0.15  # step height [m], between radius (0.10) and diameter (0.20)
 WALL_H = 0.5  # arena wall height [m], above a sphere on the platform
 MAX_LIFT = 6.0  # internal vertical force [N], about twice the sphere weight
+GRAVITY = 9.81  # [m/s^2]
 ATTACH_TOL = 0.02  # max gap between surfaces to form a link [m]
 START_ZONE = (-1.6, -0.4, -1.2, 1.2)  # x_min, x_max, y_min, y_max of start centres
 GOAL_ZONE = (1.1, 1.5, -1.0, 1.0)  # gathering zone centre bounds, the zone stays on the platform
 MIN_START_GAP = 0.1  # min distance between start surfaces [m]
 ACT_DIM = 4  # fx, fy, lift, attach
+PUSH = (1.0, 0.0, 0.0, 1.0)  # base action: hold against the face (+x) and request a link
+MOVING_SPEED = 0.05  # a sphere moves when its horizontal speed exceeds this [m/s]
 COURSE_STEPS = (1, 3)  # random courses: number of steps ...
 COURSE_RISES = (0.12, 0.15)  # ... rise of each step: above radius, the pull fails beyond 0.15 [m]
 COURSE_DEPTHS = (0.65, 0.85)  # ... platform depth between two faces [m] ...
@@ -66,6 +69,11 @@ COURSE_LAST_X = 1.0  # ... and last face, leaving room for the gathering zone [m
 QUEUE_ROOM = 0.9  # start centres stay this far behind the first face, room for the queues [m]
 _LINK_RGBA = (0.1, 0.9, 0.9, 1.0)
 _HIDDEN_GROUP = 5
+
+
+def moving_fraction(vel: NDArray[np.float64]) -> NDArray[np.float64]:
+    """Fraction of moving spheres from their velocities (..., N, >= 2), world frame."""
+    return np.mean(np.linalg.norm(vel[..., :2], axis=-1) > MOVING_SPEED, axis=-1)
 
 
 def gather_radius(n_spheres: int) -> float:
@@ -165,10 +173,10 @@ class SphereSwarmStepEnv(ParallelEnv):
         self._size, self._camera = (width, height), camera_name
         self.possible_agents = [f"sphere_{i}" for i in range(n_spheres)]
         self.agents: list[str] = []
+        self._pairs = list(combinations(range(n_spheres), 2))
         self.model = self._build_model()
         self.data = mujoco.MjData(self.model)
         self.radius = float(self.model.geom("sphere_0").size[0])
-        self._pairs = list(combinations(range(n_spheres), 2))
         self._goal_mocap = self.model.body("goal").mocapid[0]
         self._qpos = np.array([self.model.joint(f"slide_x_{i}").qposadr[0] for i in range(self.n)])
         self._qvel = np.array([self.model.joint(f"slide_x_{i}").dofadr[0] for i in range(self.n)])
@@ -209,7 +217,7 @@ class SphereSwarmStepEnv(ParallelEnv):
             geom.size[2], geom.pos[2] = wall_h / 2, wall_h / 2
         zone = spec.body("goal").first_geom()  # flat translucent disc on the platform surface
         zone.type = mujoco.mjtGeom.mjGEOM_CYLINDER
-        zone.size = (gather_radius(self.n), 0.002, 0)
+        zone.size = (self.gather_radius, 0.002, 0)
         zone.pos = (0, 0, -proto.size[0] + 0.002)
         zone.material = ""
         zone.rgba = (0.9, 0.1, 0.1, 0.45)
@@ -239,7 +247,7 @@ class SphereSwarmStepEnv(ParallelEnv):
                 friction=proto.friction,
             )
             body.add_site(name=f"centre_{i}", size=(0.01, 0, 0))
-        for i, j in combinations(range(self.n), 2):
+        for i, j in self._pairs:
             tendon = spec.add_tendon(name=f"link_{i}_{j}", width=0.015, rgba=_LINK_RGBA)
             tendon.wrap_site(f"centre_{i}")
             tendon.wrap_site(f"centre_{j}")
@@ -324,16 +332,15 @@ class SphereSwarmStepEnv(ParallelEnv):
             self.agents = []
         return (
             obs,
-            {a: float(reward) for a in agents},
-            {a: bool(success) for a in agents},
-            {a: bool(truncated) for a in agents},
+            dict.fromkeys(agents, reward),
+            dict.fromkeys(agents, success),
+            dict.fromkeys(agents, truncated),
             {a: dict(info) for a in agents},
         )
 
     def state(self) -> NDArray[np.float64]:
         """Global state: per sphere pos, vel, ang_vel (9 N), goal (3), links (upper triangle)."""
-        pos, vel, ang_vel = self._kinematics()
-        per_sphere = np.concatenate([pos, vel, ang_vel], axis=1).ravel()
+        per_sphere = self.spheres().ravel()
         links = self.data.eq_active.astype(np.float64)
         return np.concatenate([per_sphere, self.goal, links])
 
@@ -380,6 +387,10 @@ class SphereSwarmStepEnv(ParallelEnv):
             )
         return pos, vel, ang_vel
 
+    def spheres(self) -> NDArray[np.float64]:
+        """Per-sphere state (N, 9): world position, velocity and angular velocity."""
+        return np.concatenate(self._kinematics(), axis=1)
+
     def _observations(self) -> dict[str, NDArray[np.float64]]:
         pos, vel, ang_vel = self._kinematics()
         linked, goal = self.links, self.goal
@@ -400,8 +411,7 @@ class SphereSwarmStepEnv(ParallelEnv):
         return in_zone & (pos[:, 2] > self.step_height + self.radius / 2)
 
     def _dist(self) -> float:
-        pos = self._positions()
-        return float(np.linalg.norm(pos - self.goal, axis=1).mean())
+        return float(np.linalg.norm(self._positions() - self.goal, axis=1).mean())
 
     def _sample_starts(self) -> list[NDArray[np.float64]]:
         x0, x1, y0, y1 = START_ZONE
@@ -419,9 +429,9 @@ class SphereSwarmStepEnv(ParallelEnv):
         pos = self._positions()
         for k, (i, j) in enumerate(self._pairs):
             want = bool(request[i] and request[j])
-            if self.data.eq_active[k] and not want:
+            if not want:
                 self.data.eq_active[k] = False
-            elif not self.data.eq_active[k] and want:
+            elif not self.data.eq_active[k]:
                 dist = float(np.linalg.norm(pos[i] - pos[j]))
                 if dist <= 2 * self.radius + ATTACH_TOL:
                     self.model.eq_data[k, 0] = dist - self.model.tendon_length0[k]
@@ -457,6 +467,8 @@ class SwarmClimbPolicy:
     STAGE = 0.3  # climber waits this far behind its slot until the base is in place [m]
     EDGE_X = STEP_X + 0.035  # helper centre on the platform, within link range of the base [m]
     SLOT_PITCH = 0.22  # hexagonal packing pitch of the gathering slots [m]
+    PULL_HEIGHT = 0.25  # shaped pull: energy of a rest this far above the helper's centre [m] ...
+    PUMP_BAND = 0.02  # ... reached with a lift ramp over this height [m]
 
     WAIT_X = 0.2  # waiting line behind the next face [m] ...
     WAIT_DY = 0.3  # ... its first slots this far from the climbing lane, then this pitch [m]
@@ -481,7 +493,7 @@ class SwarmClimbPolicy:
     ) -> NDArray[np.float64]:
         err = target - o[self.slices["pos"]][:2]
         dist = max(float(np.linalg.norm(err)), 1e-9)
-        v_des = (vmax or self.VMAX) * err / dist * min(1.0, dist / self.BRAKE)
+        v_des = (self.VMAX if vmax is None else vmax) * err / dist * min(1.0, dist / self.BRAKE)
         return self.KV * (v_des - o[self.slices["vel"]][:2]) + self.DAMPING * v_des
 
     def _slots(self, goal: NDArray[np.float64]) -> list[NDArray[np.float64]]:
@@ -506,7 +518,25 @@ class SwarmClimbPolicy:
         lim = 2.0 - 3 * self.r
         dys = [self.WAIT_DY * (1 + j // 2) * (1 if j % 2 == 0 else -1) for j in range(4 * self.n)]
         ys = [v for v in (y + dy for dy in dys) if abs(v) <= lim][: self.n]
+        if len(ys) < self.n:
+            raise ValueError(f"no room for {self.n} waiting slots in front of a step")
         return [np.array([face - self.WAIT_X, v]) for v in ys]
+
+    def _settled(self, o: NDArray[np.float64], xy: NDArray[np.float64],
+                 tol: float | None = None) -> bool:  # fmt: skip
+        """Sphere of observation ``o`` within ``tol`` (default ``ALIGN_TOL``) of ``xy``, at rest."""
+        tol = self.ALIGN_TOL if tol is None else tol
+        return bool(np.linalg.norm(o[:2] - xy) < tol and np.linalg.norm(o[3:5]) < 0.1)
+
+    def _spots(self, face: float, y: float, back: float = -np.inf
+               ) -> tuple[NDArray[np.float64], ...]:  # fmt: skip
+        """Base, climber, staging and helper-edge spots of a climb at ``face`` on the lane ``y``;
+        the staging point stays on the current floor, off the previous step's edge ``back``."""
+        base = np.array([face - self.r - 0.01, y])
+        climb = base - (2 * self.r + 0.03, 0.0)
+        stage = np.array([max(climb[0] - self.STAGE, back + self.r + 0.05), y])
+        edge = np.array([face + self.EDGE_X - STEP_X, y])
+        return base, climb, stage, edge
 
     def _linked(self, o: NDArray[np.float64], i: int, j: int) -> bool:
         """Linked flag of sphere ``j`` in the observation ``o`` of sphere ``i``."""
@@ -519,21 +549,76 @@ class SwarmClimbPolicy:
         fy = self.KV * (holder[1] - lifter[1]) - lifter[4]  # stay in line with the holder
         return np.array([0.3, fy, 1.0, 1.0])
 
+    def _pump(self, lifter: NDArray[np.float64], holder: NDArray[np.float64]) -> float:
+        """Lift command of an energy-based swing-up (Astrom and Furuta, 2000): full lift until the
+        lifter's specific energy relative to the holder, g dz + |v|^2 / 2 (free of the mass),
+        approaches that of a rest ``PULL_HEIGHT`` above the holder, then a ramp down to zero."""
+        pos, vel = self.slices["pos"], self.slices["vel"]
+        e = GRAVITY * (lifter[pos][2] - holder[pos][2]) + 0.5 * float(lifter[vel] @ lifter[vel])
+        gap = GRAVITY * self.PULL_HEIGHT - e
+        return float(np.clip(gap / (GRAVITY * self.PUMP_BAND), 0.0, 1.0))
+
+    def _climb_step(
+        self,
+        ob: NDArray[np.float64],
+        oc: NDArray[np.float64],
+        base_xy: NDArray[np.float64],
+        climb_xy: NDArray[np.float64],
+        stage_xy: NDArray[np.float64],
+        lifting: bool,
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64], bool]:
+        """Climb (the climber goes over the base): base and climber actions and the new
+        lifting flag."""
+        act_b, act_c = np.zeros(ACT_DIM), np.zeros(ACT_DIM)
+        if not lifting:
+            base_ready = np.linalg.norm(ob[:2] - base_xy) < self.ALIGN_TOL
+            act_b[:2] = self._track(ob, base_xy)
+            act_c[:2] = self._track(oc, climb_xy if base_ready else stage_xy)
+            lifting = self._settled(ob, base_xy) and self._settled(oc, climb_xy)
+        if lifting:
+            act_b[:] = PUSH
+            act_c[:] = self._lift(ob, oc)
+        return act_b, act_c, lifting
+
+    def _pull_step(
+        self,
+        ob: NDArray[np.float64],
+        oh: NDArray[np.float64],
+        base_xy: NDArray[np.float64],
+        edge_xy: NDArray[np.float64],
+        linked: bool,
+        lifting: bool,
+        shaped: bool = False,
+    ) -> tuple[NDArray[np.float64], NDArray[np.float64], bool]:
+        """Pull (the helper at the edge pulls the base up): base and helper actions and the new
+        lifting flag. ``shaped`` meters the lift by energy (``_pump``) instead of full lift, which
+        launches the base and can drag the helper off the edge (light spheres)."""
+        act_b, act_h = np.zeros(ACT_DIM), np.zeros(ACT_DIM)
+        if not lifting:
+            act_b[:2] = self._track(ob, base_xy)
+            act_h[:2] = self._track(oh, edge_xy, vmax=0.3)
+            lifting = self._settled(ob, base_xy) and self._settled(oh, edge_xy)
+        if lifting and not linked:
+            act_h[:2] = self._track(oh, edge_xy, vmax=0.3)  # hold the edge, link first
+            act_b[:] = PUSH
+            act_h[3] = 1.0
+        elif lifting:
+            act_h[:] = PUSH
+            act_b[:] = self._lift(oh, ob)
+            if shaped:
+                act_b[2] = self._pump(ob, oh)
+        return act_b, act_h, lifting
+
     def act(self, obs: dict[str, NDArray[np.float64]]) -> dict[str, NDArray[np.float64]]:
         agents = sorted(obs, key=lambda a: int(a.rsplit("_", 1)[1]))
         o0 = obs[agents[0]]
         goal = o0[self.slices["pos"]] + o0[self.slices["goal_rel"]]
         course, level = self.course, self._level
         face, last = course.faces[level], level == len(course.faces) - 1
-        base_xy = np.array([face - self.r - 0.01, goal[1]])
-        climb_xy = base_xy - (2 * self.r + 0.03, 0.0)
-        edge_xy = np.array([face + self.EDGE_X - STEP_X, goal[1]])
-        # the staging point stays on the current floor, off the previous step's edge
-        stage_x = climb_xy[0] - self.STAGE
-        if level > 0:
-            stage_x = max(stage_x, course.faces[level - 1] + self.r + 0.05)
+        back = course.faces[level - 1] if level > 0 else -np.inf
+        base_xy, climb_xy, stage_xy, edge_xy = self._spots(face, goal[1], back)
         if self._roles is None:
-            order = [agents[i] for i in np.argsort([-obs[a][0] for a in agents], kind="stable")]
+            order = sorted(agents, key=lambda a: -obs[a][0])
             self._roles = (order[0], order[1:])
         base, climbers = self._roles
         ends = self._slots(goal) if last else self._wait_slots(course.faces[level + 1], goal[1])
@@ -545,48 +630,23 @@ class SwarmClimbPolicy:
         if self._k < len(climbers):  # a climber goes over the base
             climber = climbers[self._k]
             oc = obs[climber]
-            if not self._lifting:
-                base_ready = np.linalg.norm(ob[:2] - base_xy) < self.ALIGN_TOL
-                slot = climb_xy if base_ready else np.array([stage_x, climb_xy[1]])
-                act[base][:2] = self._track(ob, base_xy)
-                act[climber][:2] = self._track(oc, slot)
-                ready = base_ready and np.linalg.norm(oc[:2] - climb_xy) < self.ALIGN_TOL
-                speed = max(np.linalg.norm(ob[3:5]), np.linalg.norm(oc[3:5]))
-                self._lifting = bool(ready and speed < 0.1)
-            if self._lifting:
-                act[base][:] = (1.0, 0.0, 0.0, 1.0)
-                act[climber][:] = self._lift(ob, oc)
-                if oc[2] > course.floor(level) + 3 * self.r - self.TOP_MARGIN:
-                    self._up.add(climber)
-                    self._k, self._lifting = self._k + 1, False
+            act[base], act[climber], self._lifting = self._climb_step(
+                ob, oc, base_xy, climb_xy, stage_xy, self._lifting
+            )
+            if self._lifting and oc[2] > course.floor(level) + 3 * self.r - self.TOP_MARGIN:
+                self._up.add(climber)
+                self._k, self._lifting = self._k + 1, False
         elif base not in self._up:  # the last climber, at the edge, pulls the base up
             helper = climbers[-1]
             oh = obs[helper]
-            if not self._lifting:
-                act[base][:2] = self._track(ob, base_xy)
-                act[helper][:2] = self._track(oh, edge_xy, vmax=0.3)
-                ready = (
-                    np.linalg.norm(ob[:2] - base_xy) < self.ALIGN_TOL
-                    and np.linalg.norm(oh[:2] - edge_xy) < self.ALIGN_TOL
-                )
-                speed = max(np.linalg.norm(ob[3:5]), np.linalg.norm(oh[3:5]))
-                self._lifting = bool(ready and speed < 0.1)
-            if self._lifting and not self._linked(oh, agents.index(helper), agents.index(base)):
-                act[helper][:2] = self._track(oh, edge_xy, vmax=0.3)  # hold the edge, link first
-                act[base][:] = (1.0, 0.0, 0.0, 1.0)
-                act[helper][3] = 1.0
-            elif self._lifting:
-                act[helper][:] = (1.0, 0.0, 0.0, 1.0)
-                act[base][:] = self._lift(oh, ob)
-                if ob[2] > oh[2] + self.r and ob[0] > oh[0] - 0.05:
-                    self._up.add(base)
-        elif (
-            not last
-            and all(  # everyone waits in front of the next face: next step, new roles
-                np.linalg.norm(obs[a][:2] - slots[a]) < 0.1 and np.linalg.norm(obs[a][3:5]) < 0.1
-                for a in agents
+            linked = self._linked(oh, agents.index(helper), agents.index(base))
+            act[base], act[helper], self._lifting = self._pull_step(
+                ob, oh, base_xy, edge_xy, linked, self._lifting
             )
-        ):
+            if self._lifting and linked and ob[2] > oh[2] + self.r and ob[0] > oh[0] - 0.05:
+                self._up.add(base)
+        elif not last and all(self._settled(obs[a], slots[a], 0.1) for a in agents):
+            # everyone waits in front of the next face: next step, new roles
             self._level += 1
             self._roles, self._k, self._up, self._lifting = None, 0, set(), False
         return {a: np.clip(v, -1.0, 1.0) for a, v in act.items()}

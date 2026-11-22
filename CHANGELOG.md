@@ -53,12 +53,26 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- The scripted pull skill (`SkillController`) meters the lift by energy
+  (`SwarmClimbPolicy._pump`, `_pull_step(shaped=True)`, Åström and Furuta energy swing-up): full
+  lift launched the base and dragged a light helper off the edge (mass ×0.7: scripted skills
+  23/50 → 50/50 on fresh courses). The expert `SwarmClimbPolicy` keeps the full-lift pull.
+  Experiment scripts `skills_shaped.py`, `skills_chain.py pull=shaped`, `skills_adapt.py old=`;
+  paper section 5.9.
 - `swarm_plan.perturb_dynamics` recomputes the derived constants (`mj_setConst`) after scaling
   masses; `swarm.Course` rejects faces that leave no room for the start queue or lie past the
   last allowed face; start sampling raises `RuntimeError` instead of looping when the floor is
   too small for the swarm; `SkillPlanner` keeps one sampled plan with `prior_frac=1`;
   `improve_with_ppo(anchor=...)` keeps the KL and the normalisation statistics on the imitation
   policy across `train_swarm` chunks.
+- `skills_adapt.py` recomputes the derived constants (`mj_setConst`) after scaling masses; paper
+  section 5.9 reports the rerun mass conditions (mass ×0.7: robust MOSAIC 4/50, scripted skills
+  23/50). Experiment scripts resolve `data/swarm` relative to the repository instead of an
+  absolute path; `skills_adapt_stats.py` no longer crashes without tie-free pairs; `stage10.py`
+  runs on Python 3.11.
+- Swarm learning: `SwarmWorldModel.fit` raises `ValueError` on episodes shorter than its window,
+  `train_swarm` on `select_episodes` or `eval_episodes` below 1 and `swarm_rl.evaluate` on empty
+  seeds; `SwarmVecEnv.close` joins its workers.
 
 ## [1.0.0] - 2026-11-20
 

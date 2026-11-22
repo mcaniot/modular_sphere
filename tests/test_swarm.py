@@ -232,3 +232,14 @@ def test_lower_step_moves_the_goal_down():
     high.reset(seed=0)
     assert low.step_height == 0.05 and high.step_height == STEP_H
     assert high.goal[2] - low.goal[2] == pytest.approx(STEP_H - 0.05)
+
+
+def test_policy_track_honours_zero_speed():
+    pol = SwarmClimbPolicy(2)
+    o = np.zeros(obs_slices(2)["others"].stop)
+    np.testing.assert_allclose(pol._track(o, np.array([1.0, 0.0]), vmax=0.0), 0.0)
+
+
+def test_policy_rejects_swarms_without_room_for_waiting_slots():
+    with pytest.raises(ValueError, match="waiting slots"):
+        SwarmClimbPolicy(12)._wait_slots(face=1.0, y=0.0)

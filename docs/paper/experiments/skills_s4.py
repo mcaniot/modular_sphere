@@ -14,6 +14,7 @@ import pickle
 import sys
 import time
 from dataclasses import asdict
+from pathlib import Path
 
 import numpy as np
 
@@ -35,7 +36,7 @@ kw = dict(a.split("=") for a in sys.argv[3:])
 modes = kw.get("modes", "expert,dagger,script,script_serial,bc512,wam").split(",")
 n, seed0 = int(kw.get("n", "4")), int(kw.get("seed0", "200000"))
 seeds = list(range(seed0, seed0 + n_seeds))
-data = "/home/mcaniot/Documents/modular_sphere/data/swarm"
+data = str(Path(__file__).resolve().parents[3] / "data/swarm")
 root = f"{data}/skills"
 rand = kw.get("courses") == "random"
 path = (f"{root}/s4_{n_seeds}" + ("" if seed0 == 200_000 else f"_from{seed0}")

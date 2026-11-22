@@ -36,10 +36,10 @@ from modular_sphere.swarm import (
     Course,
     SphereSwarmStepEnv,
     SwarmClimbPolicy,
+    moving_fraction,
     obs_slices,
 )
 from modular_sphere.swarm_data import SwarmDataset, empty_arrays
-from modular_sphere.swarm_rl import MOVING_SPEED
 from modular_sphere.swarm_skills import (
     MAX_SKILL_STEPS,
     SkillCall,
@@ -47,6 +47,7 @@ from modular_sphere.swarm_skills import (
     SkillPrior,
     SkillValue,
     skill_features,
+    swarm_action,
 )
 from modular_sphere.swarm_wam import SkillWAM, WAMController
 
@@ -203,14 +204,7 @@ def script_executor(radius: float = 0.1) -> ExecutorFactory:
 
     def make(call: SkillCall, n: int) -> Executor:
         ctrl = SkillController(call, n, radius)
-
-        def act(obs: list[Array], spheres: Array, links: NDArray[np.bool_]) -> Array:
-            out = np.zeros((n, ACT_DIM))
-            for i, a in ctrl.act(obs).items():
-                out[i] = a
-            return out
-
-        return act
+        return lambda obs, spheres, links: ctrl.act(obs)
 
     return make
 
@@ -226,10 +220,7 @@ def prior_executor(priors: dict[str, SkillPrior]) -> ExecutorFactory:
         def act(obs: list[Array], spheres: Array, links: NDArray[np.bool_]) -> Array:
             x = torch.as_tensor(spheres, dtype=torch.float32, device=dev)
             f = skill_features(call, x, torch.as_tensor(links, device=dev))
-            out = np.zeros((n, ACT_DIM))
-            out[list(call.agents)] = prior(f).cpu().numpy()
-            out[:, 3] = np.where(out[:, 3] > 0, 1.0, -1.0)
-            return out
+            return swarm_action(n, call.agents, prior(f).cpu().numpy())
 
         return act
 
@@ -371,11 +362,10 @@ class SkillScheduler:
             self._release(i)
             self.rescues[i] = -1
         for i in [i for i, h in self.rescues.items() if h < 0]:
-            free = [j for j in self.up if spheres[j, 2] > low]
-            if not free:
+            if not self.up:  # fallen spheres were released just above
                 continue
             spot = np.array([self.top.face, spheres[i, 1]])
-            h = min(free, key=lambda j: float(np.linalg.norm(spheres[j, :2] - spot)))
+            h = min(self.up, key=lambda j: float(np.linalg.norm(spheres[j, :2] - spot)))
             self._release(h)
             self.rescues[i] = h
             self._start(lv.call("pull", (h, i), np.array([0.0, spheres[i, 1]])))
@@ -491,15 +481,15 @@ def evaluate_schedule(scheduler: SkillScheduler, seeds: list[int],
         if dynamics is not None:
             dynamics(env, seed)
         obs, _ = env.reset(seed=seed)
-        spheres = np.concatenate(env._kinematics(), 1)
+        spheres = env.spheres()
         scheduler.reset(spheres[:, :3], env.goal, course)
         t, moving, info = 0, 0.0, {}
         while env.agents:
-            moving += float(np.mean(np.linalg.norm(spheres[:, 3:5], axis=1) > MOVING_SPEED))
+            moving += float(moving_fraction(spheres[:, 3:6]))
             act = scheduler.act([obs[a] for a in env.possible_agents], spheres, env.links)
             obs, _, _, _, infos = env.step(dict(zip(env.possible_agents, act, strict=True)))
             info, t = infos[env.possible_agents[0]], t + 1
-            spheres = np.concatenate(env._kinematics(), 1)
+            spheres = env.spheres()
         res["success"].append(info["is_success"])
         res["steps"].append(t)
         res["moving"].append(moving / t)

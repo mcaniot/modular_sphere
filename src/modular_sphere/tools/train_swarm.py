@@ -89,6 +89,8 @@ def train_swarm(
     hidden: int | None = None,
     device: str | None = None,
 ) -> dict[str, object]:
+    if select_episodes < 1 or eval_episodes < 1:
+        raise ValueError("select_episodes and eval_episodes must be >= 1")
     out_dir.mkdir(parents=True, exist_ok=True)
     size = {} if hidden is None else {"hidden": hidden}
     quarter = max(1, episodes // len(TRAIN_NOISE))
@@ -185,7 +187,7 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--out-dir", type=Path, default=Path("data/swarm"))
-    parser.add_argument("--spheres", type=int, default=4)
+    parser.add_argument("--spheres", dest="n_spheres", type=int, default=4)
     parser.add_argument("--episodes", type=int, default=400)
     parser.add_argument("--val-episodes", type=int, default=50)
     parser.add_argument("--wm-epochs", type=int, default=20)
@@ -204,27 +206,8 @@ def main() -> None:
     parser.add_argument("--hidden", type=int, default=None)
     parser.add_argument("--device", default=None)
     args = parser.parse_args()
-    report = train_swarm(
-        args.out_dir,
-        n_spheres=args.spheres,
-        episodes=args.episodes,
-        val_episodes=args.val_episodes,
-        wm_epochs=args.wm_epochs,
-        bc_epochs=args.bc_epochs,
-        dagger_betas=tuple(args.dagger_betas),
-        dagger_episodes=args.dagger_episodes,
-        explore_episodes=args.explore_episodes,
-        ppo_iterations=args.ppo_iterations,
-        ppo_chunk=args.ppo_chunk,
-        kl_weight=args.kl_weight,
-        time_penalty=args.time_penalty,
-        select_episodes=args.select_episodes,
-        ensemble=args.ensemble,
-        uncertainty_weight=args.uncertainty_weight,
-        eval_episodes=args.eval_episodes,
-        hidden=args.hidden,
-        device=args.device,
-    )
+    args.dagger_betas = tuple(args.dagger_betas)
+    report = train_swarm(**vars(args))
     print(json.dumps({"policies": report["policies"]}, indent=2))
 
 

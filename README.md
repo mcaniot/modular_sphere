@@ -179,8 +179,12 @@ exact McNemar on success and sign test on steps against the expert):
   with randomised mass, friction and rise mixed with the nominal data, MOSAIC matches the
   expert's success in seven of nine conditions, at about half its steps. The conditions are
   friction ×0.5 and ×1.5, mass ×1.5, rise 0.10 m and N = 5 or 6.
-- **Open limits:** under 5 mm of sensor noise MOSAIC solves 42/50, against 49/50 for the expert;
-  with spheres 30 % lighter it solves 28/50, against 50/50.
+- **Energy-shaped pull:** the skills' pull meters the lift by the base's specific energy
+  (energy-based swing-up, mass-free) instead of full lift, which dragged light helpers off the
+  edge. Retrained on its labels, MOSAIC solves 50/50 with spheres 30 % lighter (2/50 before) and
+  matches the expert in seven of nine conditions on fresh courses, always faster.
+- **Open limits:** under 5 mm of sensor noise MOSAIC solves 42/50 and with spheres 50 % heavier
+  44/50, against 50/50 for the expert.
 
 ## Simulation contract
 

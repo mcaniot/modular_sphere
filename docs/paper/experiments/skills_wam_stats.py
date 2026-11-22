@@ -1,10 +1,11 @@
 """Paired statistics of skills_wam.py results (run with: uv run --with scipy python ...)."""
 
 import pickle
+from pathlib import Path
 
 from scipy.stats import beta, binomtest
 
-root = "/home/mcaniot/Documents/modular_sphere/data/swarm/skills"
+root = str(Path(__file__).resolve().parents[3] / "data/swarm/skills")
 
 
 def ci(k, n):
@@ -27,8 +28,10 @@ for name in ("climb", "pull", "roll"):
         faster, slower = int((st[both] < bs[both]).sum()), int((st[both] > bs[both]).sum())
         ps = binomtest(faster, faster + slower, 0.5).pvalue if faster + slower else 1.0
         d = (st[both] - bs[both]).mean()
-        print(f"  {mode} vs bc: McNemar b={b} c={c} p={p:.2g}; both ok {both.sum()}, "
-              f"faster {faster} slower {slower} sign p={ps:.2g}, mean diff {d:+.1f}")
+        print(
+            f"  {mode} vs bc: McNemar b={b} c={c} p={p:.2g}; both ok {both.sum()}, "
+            f"faster {faster} slower {slower} sign p={ps:.2g}, mean diff {d:+.1f}"
+        )
     ok, st = r["wam_ens"]
     o2, s2 = r["wam"]
     b, c = int((ok & ~o2).sum()), int((~ok & o2).sum())

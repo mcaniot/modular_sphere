@@ -101,7 +101,7 @@ def test_learned_executors_run_and_stuck_skills_restart():
     sched = SkillScheduler(4, _DistEffect(), wam_executor(wams))
     env = SphereSwarmStepEnv(n_spheres=4)
     obs, _ = env.reset(seed=0)
-    spheres = np.concatenate(env._kinematics(), 1)
+    spheres = env.spheres()
     sched.reset(spheres[:, :3], env.goal)
     act = sched.act([obs[a] for a in env.possible_agents], spheres, env.links)
     assert act.shape == (4, 4) and np.all(np.abs(act) <= 1.0)

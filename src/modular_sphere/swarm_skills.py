@@ -18,6 +18,7 @@ configuration, duration and success of every episode feed the skill effect model
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import mujoco
@@ -32,11 +33,12 @@ from modular_sphere.swarm import (
     SphereSwarmStepEnv,
     SwarmClimbPolicy,
 )
-from modular_sphere.swarm_data import SwarmDataset, empty_arrays
-from modular_sphere.swarm_torch import SwarmWorldModel
+from modular_sphere.swarm_data import SwarmDataset, empty_arrays, record
+from modular_sphere.swarm_torch import SwarmWorldModel, _fit_epochs, _mlp, squash
 
 Array = NDArray[np.float64]
 SKILLS = ("roll", "climb", "pull")
+SKILL_AGENTS = {"roll": (0,), "climb": (0, 1), "pull": (0, 1)}  # spheres a skill drives
 MAX_SKILL_STEPS = 200  # 10 s: a skill that has not ended by then failed
 ROLL_TOL = 0.03  # roll ends within this distance of the target [m] ...
 ROLL_SPEED = 0.05  # ... below this speed [m/s]
@@ -46,8 +48,10 @@ STD_FLOOR = 0.01
 
 
 def place(env: SphereSwarmStepEnv, pos: Array) -> None:
-    """Put the spheres at rest at ``pos`` (N, 3), unlinked."""
+    """Put the spheres at rest at ``pos`` (N, 3), unlinked, and park the goal off the arena (no
+    task success mid-skill)."""
     env.data.qvel[:] = 0.0
+    env.data.mocap_pos[env._goal_mocap][:2] = (10.0, 10.0)
     for i, p in enumerate(pos):
         env.data.qpos[env._qpos[i] : env._qpos[i] + 3] = p
     env.data.eq_active[:] = 0
@@ -81,12 +85,8 @@ class SkillController:
         self.call, self.r = call, radius
         self.ex = SwarmClimbPolicy(n_spheres, radius)
         self.lifting = False
-        y = float(call.target[1])
-        self.base_xy = np.array([call.face - radius - 0.01, y])
-        self.climb_xy = self.base_xy - (2 * radius + 0.03, 0.0)
-        self.edge_xy = np.array([call.face + self.ex.EDGE_X - STEP_X, y])
-        stage_x = max(self.climb_xy[0] - self.ex.STAGE, call.back + radius + 0.05)
-        self.stage_xy = np.array([stage_x, y])
+        spots = self.ex._spots(call.face, float(call.target[1]), call.back)
+        self.base_xy, self.climb_xy, self.stage_xy, self.edge_xy = spots
 
     def done(self, pos: Array, vel: Array) -> bool:
         """Termination event from the true sphere positions and velocities (N, 3)."""
@@ -100,47 +100,33 @@ class SkillController:
         h, b = ag
         return bool(pos[b, 2] > pos[h, 2] + self.r and pos[b, 0] > pos[h, 0] - 0.05)
 
-    def act(self, obs: list[Array]) -> dict[int, Array]:
-        """Actions of the involved spheres from their local observations (index -> obs)."""
+    def act(self, obs: list[Array]) -> Array:
+        """Actions (N, 4) from the local observations; spheres outside the call stay still."""
         name, ag, ex = self.call.name, self.call.agents, self.ex
-        out = {i: np.zeros(ACT_DIM) for i in ag}
+        out = np.zeros((ex.n, ACT_DIM))
         if name == "roll":
             out[ag[0]][:2] = ex._track(obs[ag[0]], self.call.target)
             return out
         if name == "climb":
             c, b = ag
-            oc, ob = obs[c], obs[b]
-            if not self.lifting:
-                base_ready = np.linalg.norm(ob[:2] - self.base_xy) < ex.ALIGN_TOL
-                slot = self.climb_xy if base_ready else self.stage_xy
-                out[b][:2] = ex._track(ob, self.base_xy)
-                out[c][:2] = ex._track(oc, slot)
-                ready = base_ready and np.linalg.norm(oc[:2] - self.climb_xy) < ex.ALIGN_TOL
-                speed = max(np.linalg.norm(ob[3:5]), np.linalg.norm(oc[3:5]))
-                self.lifting = bool(ready and speed < 0.1)
-            if self.lifting:
-                out[b][:] = (1.0, 0.0, 0.0, 1.0)
-                out[c][:] = ex._lift(ob, oc)
+            out[b], out[c], self.lifting = ex._climb_step(
+                obs[b], obs[c], self.base_xy, self.climb_xy, self.stage_xy, self.lifting
+            )
             return out
         h, b = ag
-        oh, ob = obs[h], obs[b]
-        if not self.lifting:
-            out[b][:2] = ex._track(ob, self.base_xy)
-            out[h][:2] = ex._track(oh, self.edge_xy, vmax=0.3)
-            ready = (
-                np.linalg.norm(ob[:2] - self.base_xy) < ex.ALIGN_TOL
-                and np.linalg.norm(oh[:2] - self.edge_xy) < ex.ALIGN_TOL
-            )
-            speed = max(np.linalg.norm(ob[3:5]), np.linalg.norm(oh[3:5]))
-            self.lifting = bool(ready and speed < 0.1)
-        if self.lifting and not ex._linked(oh, h, b):
-            out[h][:2] = ex._track(oh, self.edge_xy, vmax=0.3)  # hold the edge, link first
-            out[b][:] = (1.0, 0.0, 0.0, 1.0)
-            out[h][3] = 1.0
-        elif self.lifting:
-            out[h][:] = (1.0, 0.0, 0.0, 1.0)
-            out[b][:] = ex._lift(oh, ob)
+        linked = ex._linked(obs[h], h, b)
+        out[b], out[h], self.lifting = ex._pull_step(
+            obs[b], obs[h], self.base_xy, self.edge_xy, linked, self.lifting, shaped=True
+        )
         return out
+
+
+def swarm_action(n: int, agents: Sequence[int], act: Array) -> Array:
+    """Actions (n, 4) with rows ``act`` for ``agents``, zeros elsewhere, attach binarised."""
+    out = np.zeros((n, ACT_DIM))
+    out[list(agents)] = act
+    out[:, 3] = np.where(out[:, 3] > 0, 1.0, -1.0)
+    return out
 
 
 def sample_start(name: str, rng: np.random.Generator, radius: float = 0.1) -> tuple[Array, Array]:
@@ -191,11 +177,9 @@ def skill_features(call: SkillCall, x: torch.Tensor, links: torch.Tensor) -> tor
     """Target-relative state of the involved spheres (..., F) from states (..., N, 9), links;
     heights are relative to the call's floor."""
     ag = list(call.agents)
-    if call.name == "roll":
-        ref = (float(call.target[0]), float(call.target[1]), call.floor)
-    else:
-        ref = (call.face, float(call.target[1]), call.floor)
-    ref_t = torch.tensor([*ref, *([0.0] * 6)], dtype=x.dtype, device=x.device)
+    x0 = float(call.target[0]) if call.name == "roll" else call.face
+    ref_t = torch.tensor([x0, float(call.target[1]), call.floor, *([0.0] * 6)], dtype=x.dtype,
+                         device=x.device)  # fmt: skip
     feats = [(x[..., ag, :] - ref_t).flatten(-2)]
     if len(ag) == 2:
         feats.append(links[..., ag[0], ag[1], None].to(x.dtype))
@@ -217,10 +201,7 @@ class _SkillNet(torch.nn.Module):
         super().__init__()
         self.n_agents, self.hidden = n_agents, hidden
         dim = feature_dim(n_agents)
-        self.net = torch.nn.Sequential(
-            torch.nn.Linear(dim, hidden), torch.nn.SiLU(), torch.nn.Linear(hidden, hidden),
-            torch.nn.SiLU(), torch.nn.Linear(hidden, out_dim),
-        )  # fmt: skip
+        self.net = _mlp(dim, out_dim, hidden)
         self.register_buffer("mean", torch.zeros(dim))
         self.register_buffer("std", torch.ones(dim))
 
@@ -235,21 +216,9 @@ class _SkillNet(torch.nn.Module):
         torch.manual_seed(seed)
         self.mean.copy_(f.mean(0))
         self.std.copy_(f.std(0).clamp(min=STD_FLOOR))
-        optim = torch.optim.AdamW(self.net.parameters(), lr=lr, weight_decay=1e-5)
-        sched = torch.optim.lr_scheduler.CosineAnnealingLR(optim, T_max=epochs)
-        gen = torch.Generator(device="cpu").manual_seed(seed)
-        losses = []
-        for _ in range(epochs):
-            total = 0.0
-            for idx in torch.randperm(f.shape[0], generator=gen).to(f.device).split(batch_size):
-                loss = self._loss(self(f[idx]), y[idx])
-                optim.zero_grad(set_to_none=True)
-                loss.backward()
-                optim.step()
-                total += loss.item() * idx.numel()
-            sched.step()
-            losses.append(total / f.shape[0])
-        return losses
+        return _fit_epochs(self.net.parameters(), f.shape[0],
+                           lambda idx: self._loss(self(f[idx]), y[idx]),
+                           epochs, lr, batch_size, seed, f.device)  # fmt: skip
 
     def save(self, path: str) -> None:
         torch.save({"n_agents": self.n_agents, "hidden": self.hidden,
@@ -280,8 +249,7 @@ class SkillPrior(_SkillNet):
         super().__init__(n_agents, n_agents * ACT_DIM, hidden)
 
     def forward(self, feats: torch.Tensor) -> torch.Tensor:
-        out = self._raw(feats).unflatten(-1, (self.n_agents, ACT_DIM))
-        return torch.cat([torch.tanh(out[..., :3]), out[..., 3:]], dim=-1)
+        return squash(self._raw(feats).unflatten(-1, (self.n_agents, ACT_DIM)))
 
     def _loss(self, out: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         mse = ((out[..., :3] - y[..., :3]) ** 2).mean()
@@ -397,10 +365,7 @@ class SkillPlanner:
             w = torch.softmax(-(cost - cost.min()) / (self.temp * self.h), dim=0)
             mean = (w[:, None, None, None] * plans).sum(0)
         self.mean = torch.cat([mean[1:], mean[-1:]])  # shift for the next control step
-        out = np.zeros((self.n, ACT_DIM))
-        out[self.ag] = mean[0].cpu().numpy()
-        out[:, 3] = np.where(out[:, 3] > 0, 1.0, -1.0)
-        return out
+        return swarm_action(self.n, self.ag, mean[0].cpu().numpy())
 
 
 @dataclass
@@ -421,39 +386,30 @@ def collect_skill(name: str, n_episodes: int, seed: int = 0, noise: float = 0.2)
         raise ValueError(f"unknown skill {name!r}, expected one of {SKILLS}")
     env = SphereSwarmStepEnv(n_spheres=2, max_steps=MAX_SKILL_STEPS + 1)
     agents, horizon, rng = env.possible_agents, MAX_SKILL_STEPS, np.random.default_rng(seed)
-    ag = (0,) if name == "roll" else (0, 1)
-    obs_dim = env.slices["others"].stop
-    out = empty_arrays(n_episodes, horizon, 2, obs_dim)
+    ag = SKILL_AGENTS[name]
+    out = empty_arrays(n_episodes, horizon, 2, env.slices["others"].stop)
     starts, targets = np.zeros((n_episodes, 2, 3)), np.zeros((n_episodes, 2))
-    steps = np.zeros(n_episodes, dtype=np.int64)
-
-    def record(e: int, t: int, obs: dict[str, Array]) -> None:
-        out["spheres"][e, t:] = np.concatenate(env._kinematics(), axis=1)
-        out["links"][e, t:] = env.links
-        out["obs"][e, t:] = np.stack([obs[a] for a in agents])
 
     for e in range(n_episodes):
         env.reset(seed=seed + e)
         starts[e], targets[e] = sample_start(name, rng, env.radius)
         place(env, starts[e])
-        env.data.mocap_pos[env._goal_mocap][:2] = (10.0, 10.0)  # no task success mid-skill
+        out["goal"][e] = env.goal
         ctrl = SkillController(SkillCall(name, ag, targets[e]), 2, env.radius)
         obs = env._observations()
-        record(e, 0, obs)
+        record(out, env, e, 0, obs)
         for t in range(horizon):
-            label = np.zeros((2, ACT_DIM))
-            for i, a in ctrl.act([obs[a] for a in agents]).items():
-                label[i] = a
+            label = ctrl.act([obs[a] for a in agents])
             executed = label.copy()
             executed[list(ag), :3] += noise * rng.standard_normal((len(ag), 3))
             executed = np.clip(executed, -1.0, 1.0)
             obs, *_ = env.step(dict(zip(agents, executed, strict=True)))
             out["actions"][e, t], out["expert"][e, t] = executed, label
             out["valid"][e, t] = True
-            record(e, t + 1, obs)
-            pos, vel = env._kinematics()[:2]
-            if ctrl.done(pos, vel):
+            record(out, env, e, t + 1, obs)
+            x = out["spheres"][e, t + 1]
+            if ctrl.done(x[:, :3], x[:, 3:6]):
                 out["success"][e] = True
                 break
-        steps[e] = t + 1
-    return SkillData(SwarmDataset(**out), starts, targets, steps, out["success"].copy())
+    data = SwarmDataset(**out)
+    return SkillData(data, starts, targets, data.valid.sum(1), data.success.copy())

@@ -2,14 +2,23 @@
 
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 import torch
 
 from modular_sphere.swarm import SphereSwarmStepEnv
 from modular_sphere.swarm_skills import (
-    MAX_SKILL_STEPS, SKILLS, SkillCall, SkillController, SkillPlanner, SkillPrior, SkillValue, place,
-    sample_start, skill_features,
+    MAX_SKILL_STEPS,
+    SKILLS,
+    SkillCall,
+    SkillController,
+    SkillPlanner,
+    SkillPrior,
+    SkillValue,
+    place,
+    sample_start,
+    skill_features,
 )
 from modular_sphere.swarm_torch import SwarmWorldModel
 
@@ -20,7 +29,7 @@ for k in ("horizon", "samples", "iterations"):
         kw[k] = int(kw[k])
 skills = [kw.pop("skill")] if "skill" in kw else SKILLS
 mode = {0: "mppi", 1: "prior", 2: "bc", 3: "value", 4: "value+prior"}[int(kw.pop("mode", 0))]
-root = "/home/mcaniot/Documents/modular_sphere/data/swarm/skills"
+root = str(Path(__file__).resolve().parents[3] / "data/swarm/skills")
 for name in skills:
     if isinstance(name, float):
         name = SKILLS[int(name)]
@@ -35,11 +44,11 @@ for name in skills:
         env.reset(seed=e)
         start, target = sample_start(name, rng, env.radius)
         place(env, start)
-        env.data.mocap_pos[env._goal_mocap][:2] = (10.0, 10.0)
         call = SkillCall(name, ag, target)
         judge = SkillController(call, 2, env.radius)
-        planner = SkillPlanner(wm, call, 2, seed=e, prior=prior if "prior" in mode else None,
-                               value=value, **kw)
+        planner = SkillPlanner(
+            wm, call, 2, seed=e, prior=prior if "prior" in mode else None, value=value, **kw
+        )
         ok = False
         for t in range(MAX_SKILL_STEPS):
             pos, vel, ang = env._kinematics()
@@ -61,5 +70,8 @@ for name in skills:
         res.append((ok, t + 1))
     r = np.array(res)
     ok = r[:, 0].astype(bool)
-    print(f"{name} {mode} {kw}: success {ok.sum()}/{n_eps}, steps on success "
-          f"{r[ok, 1].mean() if ok.any() else float('nan'):.0f} ({time.time() - t0:.0f}s)", flush=True)
+    print(
+        f"{name} {mode} {kw}: success {ok.sum()}/{n_eps}, steps on success "
+        f"{r[ok, 1].mean() if ok.any() else float('nan'):.0f} ({time.time() - t0:.0f}s)",
+        flush=True,
+    )

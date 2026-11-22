@@ -3,6 +3,7 @@
 Usage: skills_chain.py DEVICE KIND [rounds=3] [episodes=100] [noise=0.2] [val=50] [tag=]
     [input_noise=0] [dynamics=0]
     [rises=LOW,HIGH] [extra=NAME,...] (segments of chain_segments_{NAME}.pkl added to every fit)
+    [pull=shaped] (two-sphere pull data of skills_shaped.py, energy-shaped pull)
 KIND is ``bc512`` (cloned MLP, 512 units) or ``wam``. Round 0 runs the scheduler with the scripted
 skills and DART noise in the four-sphere env (train seeds 0.., never the validation seeds
 300000.., the test seeds 200000.. or the held-out six-sphere seeds 400000..) and records every skill
@@ -17,6 +18,7 @@ import pickle
 import sys
 import time
 from dataclasses import asdict
+from pathlib import Path
 
 import numpy as np
 
@@ -49,15 +51,16 @@ def courses(seed):  # single step of random rise (chain data only)
 
 
 tag = kind + kw.get("tag", "")  # output name: chain_{KIND}{tag}_...
-root = "/home/mcaniot/Documents/modular_sphere/data/swarm/skills"
+root = str(Path(__file__).resolve().parents[3] / "data/swarm/skills")
 VAL = list(range(300_000, 300_000 + n_val))
 N_AGENTS = {"roll": 1, "climb": 2, "pull": 2}
 effect = EffectModel({s: SkillValue.load(f"{root}/value_{s}.pt", device) for s in SKILLS})
 
 
 def base_data(name):
-    data = SwarmDataset.load(f"{root}/{name}_train.npz")
-    with open(f"{root}/{name}_outcomes.pkl", "rb") as f:
+    stem = f"{name}_{kw['pull']}" if name == "pull" and "pull" in kw else name
+    data = SwarmDataset.load(f"{root}/{stem}_train.npz")
+    with open(f"{root}/{stem}_outcomes.pkl", "rb") as f:
         targets = np.concatenate([p[1] for p in pickle.load(f)["train"]])
     ag = tuple(range(N_AGENTS[name]))
     return data, [SkillCall(name, ag, t) for t in targets]

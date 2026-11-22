@@ -21,5 +21,7 @@ for h in (0.02, 0.04, 0.06):
             info, t = infos["sphere_0"], t + 1
         res.append((info["is_success"], t, info["n_arrived"]))
     s = np.array(res)
-    print(f"h={h}: success {s[:, 0].sum()}/10, steps {s[:, 1].mean():.0f}, arrived {s[:, 2].mean():.1f}",
-          flush=True)
+    print(
+        f"h={h}: success {s[:, 0].sum()}/10, steps {s[:, 1].mean():.0f}, arrived {s[:, 2].mean():.1f}",
+        flush=True,
+    )

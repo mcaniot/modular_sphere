@@ -15,6 +15,7 @@ import os
 import pickle
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 
@@ -35,7 +36,7 @@ kw = dict(a.split("=") for a in sys.argv[3:])
 skills = kw.get("skills", "climb").split(",")
 variants = kw.get("variants", "nohist,nochunk,noframe").split(",")
 seed = int(kw.get("seed", "0"))
-root = "/home/mcaniot/Documents/modular_sphere/data/swarm/skills"
+root = str(Path(__file__).resolve().parents[3] / "data/swarm/skills")
 CFG = {
     "full": ({}, 1.0),
     "nohist": ({"history": 1}, 1.0),
@@ -81,12 +82,11 @@ def evaluate(wam, name: str) -> tuple[np.ndarray, np.ndarray]:
         env.reset(seed=e)
         start, target = sample_start(name, rng, env.radius)
         place(env, start)
-        env.data.mocap_pos[env._goal_mocap][:2] = (10.0, 10.0)
         call = SkillCall(name, ag, target)
         judge, ctrl = SkillController(call, 2, env.radius), WAMController(wam, call, 2, None)
         for t in range(MAX_SKILL_STEPS):
             steps[e] = t + 1
-            act = ctrl.act(np.concatenate(env._kinematics(), 1), env.links)
+            act = ctrl.act(env.spheres(), env.links)
             env.step({a: act[i] for i, a in enumerate(env.possible_agents)})
             pos, vel = env._kinematics()[:2]
             if judge.done(pos, vel):
