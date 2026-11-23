@@ -30,7 +30,7 @@ jobs:
       - run: uv run ruff format --check src tests
       # Filament needs an X display: Mesa llvmpipe under Xvfb.
       - run: xvfb-run -a uv run pytest -rs --cov --cov-report=term --cov-report=xml
-      - uses: codecov/codecov-action@v5
+      - uses: codecov/codecov-action@v7
         if: matrix.python == '3.12'
         with:
           files: coverage.xml
