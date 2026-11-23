@@ -53,6 +53,13 @@ also dropped to 23/50. The cause was the scripted pull: full lift launched the b
 light helper off the edge. An energy-based pull (lift metered by the base's specific energy, which
 does not depend on the mass; Åström and Furuta, 2000) and executors retrained on its labels solve
 50/50 with lighter spheres on fresh courses (2/50 before), and keep O1 (50/50, ×0.57).
+Finally, we compare small per-skill swarm world models with one large model on the same data
+(three training seeds): the skill-call frame, not modularity, is what generalises (about five
+times lower 30-step error on unseen courses than world-frame models up to 19 M parameters);
+per-skill models match a shared framed model of equal size, and adding the pull skill leaves
+them unchanged (0.0 cm forgetting) while shared models lose 6–24 cm on the skills they knew.
+Using any of these models, or even the simulator, to verify MOSAIC's action chunks does not
+improve success.
 
 ## 1. Introduction
 
@@ -607,6 +614,96 @@ and is faster in all of them; it keeps O1 (test seeds 200000–200049: 50/50 in 
 noise (42/50) and with spheres 50 % heavier (44/50, 55 skill restarts, while the scripted skills
 solve 49/50), so these two are learning failures that remain.
 
+### 5.10 Small per-skill swarm world models against one large model (E1–E3)
+
+Question: do several small world models, one per skill, predict the swarm better than one large
+model, and do they make adding a skill or a scenario cheaper? `swarm_modular.py` trains four
+model kinds on the same data, all set transformers over sphere tokens with a learned
+link-attention bias (`SwarmWM`):
+
+- `world`: world-frame states plus the course faces (the large monolith);
+- `id`: `world` plus the skill and role of every sphere (the monolith with skill identity, as
+  in skill-conditioned models such as SkiMo or TD-MPC2);
+- `frame`: one shared net whose inputs are expressed in the frame of the skill call each sphere
+  executes (reference point of the call, skill, role, rise; idle spheres use their own position);
+- `modular`: four nets (idle, roll, climb, pull) with exactly the `frame` inputs, each attending
+  only to the spheres of the same call, routed by the executed call.
+
+Data: the scripted scheduler with the true call schedule recorded (`record_episode`), train seeds
+0–399 (one in four nominal, the others a random rise in [0.10, 0.15] m and randomised dynamics;
+DART noise 0.05 in half of them), validation 300000.., test 200000..; out of distribution on seeds
+600000–600049: random 1–3 step courses, six spheres, mass ×0.7 and ×1.5, rise 0.17 m. Training:
+open-loop unroll loss over windows of 8 steps, 40 epochs, three training seeds per variant.
+
+**E1, accuracy.** Open-loop position RMSE at 30 steps (1.5 s), cm, mean ± std over three
+training seeds (`world_512x6`: one seed):
+
+| Variant | Params | test | courses | N = 6 | mass ×0.7 | mass ×1.5 | rise 0.17 |
+|---|---|---|---|---|---|---|---|
+| modular 64×2 | 0.41 M | 1.97 ± 0.05 | 4.56 ± 0.22 | 4.99 ± 0.19 | 3.10 ± 0.21 | 4.56 ± 0.17 | 5.23 ± 0.38 |
+| modular 128×2 | 1.6 M | 1.88 ± 0.08 | **4.17 ± 0.31** | 5.27 ± 0.26 | 2.86 ± 0.14 | 5.97 ± 0.55 | 4.90 ± 0.50 |
+| frame 128×2 | 0.40 M | 1.86 ± 0.03 | 4.70 ± 0.10 | 4.10 ± 0.16 | 3.79 ± 0.18 | 3.04 ± 0.33 | 3.78 ± 0.11 |
+| frame 256×4 | 3.2 M | **1.38 ± 0.01** | 5.09 ± 0.21 | **3.53 ± 0.08** | **2.69 ± 0.22** | **2.13 ± 0.07** | **2.87 ± 0.16** |
+| id 256×4 | 3.2 M | 2.46 ± 0.15 | 21.4 ± 0.4 | 5.28 ± 0.07 | 5.19 ± 0.93 | 3.58 ± 0.07 | 3.77 ± 0.19 |
+| world 256×4 | 3.2 M | 2.33 ± 0.23 | 24.9 ± 1.1 | 6.20 ± 0.34 | 6.91 ± 0.68 | 3.93 ± 0.04 | 4.13 ± 0.34 |
+| world 512×6 | 19 M | 2.17 | 21.8 | 5.06 | 4.52 | 4.13 | 4.56 |
+
+The decisive factor is the skill-call frame, not modularity: every framed model is about five
+times more accurate than the world-frame models on unseen courses, including the 19 M-parameter
+one. At equal parameters `modular` matches the shared framed net; the 8× larger shared framed
+net is better in distribution and on six spheres, mass and rise; `modular 128×2` is the best on
+random courses. At one step the large models are better in distribution (0.12 cm against 0.22).
+Full tables (per horizon, per skill, at call changes, paired sign tests):
+`modular_e1_report.py`.
+
+**E3, adding a skill.** Phase 1 trains without any pull window; phase 2 adds pull episodes (10
+or all). `modular` trains only its new pull net; the shared models fine-tune all parameters, as
+in the continual-learning protocol of Zhou et al. (2026). Forgetting is the RMSE change at 30
+steps on test windows without pull (cm, three seeds):
+
+| Model | test without pull, p1 → p2 (all) | forgetting, 10 / all pull episodes | test with pull after p2 (all) |
+|---|---|---|---|
+| modular 64×2 | 1.4 → 1.4 | +0.0 ± 0.0 / +0.0 ± 0.0 | 2.7 ± 0.2 |
+| frame 128×2 | 1.1 → 7.4 | +6.7 ± 1.1 / +6.3 ± 1.2 | 2.8 ± 0.2 |
+| world 256×4 | 3.2 → 14.6 | +23.9 ± 1.5 / +11.4 ± 1.5 | 2.4 ± 0.1 |
+
+The modular model learns the new skill as well as the shared ones and forgets nothing by
+construction; the shared models lose 6–24 cm on the skills they knew. With 10 pull episodes the
+modular pull net is also the most accurate on pull (6.9 ± 0.2 cm against 14.0 and 10.0).
+
+**E2, the world model as a verifier of the learned executors (negative).** `WMVerifier` takes
+every action chunk of the WAM executors, adds K − 1 = 15 Gaussian offsets held over the chunk,
+rolls them out 10 steps in a world model (other spheres keep their last action) and executes the
+candidate with the fewest predicted steps to go (`SkillValue`) if it beats the chunk by a margin.
+Upper bound: the same selection with MuJoCo itself (state saved and restored,
+`simulator_rollouts`). Fresh random courses 600000–600049, same seeds for all modes; offsets
+σ = 0.05, margin 3 steps (σ = 0.3, margin 1 fails on every pilot seed, oracle included):
+
+| Verifier | noise 5 mm (MOSAIC 46/50) | mass ×1.5 (MOSAIC 44/50) |
+|---|---|---|
+| MuJoCo oracle, learned value | 47/50 (4 up, 3 down, p = 1) | **25/50** (0 up, 19 down, p < 0.001) |
+| modular 64×2 | 44/50 (p = 0.75) | 45/50 (p = 1) |
+| frame 256×4 | 46/50 (p = 1) | 42/50 (p = 0.5) |
+| world 256×4 | 45/50 (p = 1) | 45/50 (p = 1) |
+| each of the three after `explore` fine-tuning | 40–43/50 (p ≥ 0.11) | 44–46/50 (p ≥ 0.5) |
+
+No world model changes success (exact McNemar, all p ≥ 0.1), and the oracle shows why: even
+perfect predictions do not help, and with heavier spheres the learned value, trained at nominal
+mass, ranks the outcomes wrongly. A cost with no learned part (centimetres to the skill's
+termination event, `progress_cost`) is worse still (oracle 6/35 and 9/33 against 31/35 and 31/33
+for MOSAIC on the same seeds; stopped): a 10-step greedy cost breaks the preparatory motions of
+climb and pull that the chunk already carries. The ranking diagnostic (`modular_e2_rank.py`)
+also shows that models trained on expert data with white DART noise rank candidates at chance
+(Spearman −0.28 to 0.07 against the oracle, one seed, 52 decisions) and respond 2–3× too little to a held action offset
+after 10 steps. Fine-tuning on `explore` data with held offsets (`HeldNoise`, 400 episodes)
+improves the fit of the large models (loss 0.82 → 0.24) more than that of the small modular one
+(1.37 → 0.88), and does not change closed-loop success.
+
+Verdict: small per-skill models are not more accurate than one large model; the skill-call frame
+is what generalises, and modularity adds continual learning without forgetting at no accuracy
+cost at equal size. Runtime verification of a good imitation policy by a world model brings
+nothing here, whatever the model.
+
 ## 6. Negative results and fixed defects
 
 | Attempt | Outcome | Diagnosis |
@@ -630,6 +727,9 @@ solve 49/50), so these two are learning failures that remain.
 | Chain data with randomised dynamics only | nominal 50/50 → 42/50 (300 episodes) | nominal data diluted; mixed with the nominal chain data (50/50) |
 | Randomised mass with a history-free pull | mass ×0.7: 37/50 → 4/50 (fresh courses); scripted skills 23/50 | full-lift pull launches the base and drags a light helper off the edge; energy-shaped pull: 50/50 (Section 5.9) |
 | Online mass estimate (recursive least squares) and force scaling | mass ×0.7: MOSAIC 12/20 (oracle mass ratio 20/20, 3 % too high 7/20) | the full-lift pull tolerates only a few per cent of extra energy; replaced by the energy-shaped pull |
+| World-model verifier with offsets σ = 0.3, margin 1 (Section 5.10) | 0/3 pilot seeds, override at almost every step; MuJoCo oracle 0/6 per condition | candidates far from the data: the value (and the model) are exploited |
+| Verifier candidates with a raw attach command | the model received unbinarised attach values | binarised as executed (`swarm_action`) |
+| Oracle verifier with a geometric cost (`progress_cost`) | 6/35 and 9/33 against 31/35 and 31/33 | a 10-step greedy cost breaks preparatory motions |
 
 ## 7. Threats to validity and limits
 
@@ -664,7 +764,8 @@ PyTorch 2.15.0 (CUDA 13.2), NumPy 2.5.5, Gymnasium 1.4.0, PettingZoo 1.27.0; one
 GPU, 6 CPU cores. Environment: `uv sync --extra dev --extra torch`.
 
 Software tests: `uv run ruff check src tests` and `MUJOCO_GL=egl uv run pytest -q --cov` pass
-with 142 tests and 100 % line and branch coverage, including `swarm_rl.py`, `swarm_skills.py`,
+with 168 tests and 100 % line and branch coverage except two lines of `swarm_rl.py` (153-154),
+including `swarm_modular.py`, `swarm_rl.py`, `swarm_skills.py`,
 `swarm_wam.py` and the `step_height` option (`tests/test_swarm_rl.py`,
 `tests/test_swarm_skills.py`). Tests check interfaces, invariants and that losses decrease; they do
 not reproduce the success rates above.
@@ -691,6 +792,9 @@ author's machine and still need to be parametrised):
 | 5.9 robust executors | `skills_chain.py wam rounds=1 input_noise=0.005` (`tag=_noise`); `dynamics=1 rises=0.10,0.15 episodes=300 tag=_robust300`; `episodes=100 extra=wam_robust300 tag=_mix` | collection 0–299 |
 | 5.9 shaped pull | `skills_shaped.py`; `skills_chain.py wam rounds=1 dynamics=1 rises=0.10,0.15 episodes=300 input_noise=0.005 pull=shaped tag=_robust300e`, then `episodes=100 extra=wam_robust300e pull=shaped tag=_mixe`; `skills_adapt.py COND modes=expert,mosaic0,mosaic,script wam=chain_wam_mixe old=chain_wam_mix seed0=600000 tag=_shaped`, `skills_adapt_stats.py _shaped`; `skills_s4.py cuda 50 modes=chain_wam_mixe` (O1) | pull data as 5.4; collection 0–299; validation 300000..; fresh courses 600000–600049 |
 | 5.9 adaptability | `skills_adapt.py COND [wam=chain_wam_mix seed0=500000 modes=expert,mosaic0,mosaic tag=_confirm]`, `skills_adapt_stats.py _confirm`; `skills_s4.py cuda 50 modes=chain_wam_mix` (O1) | courses 400000–400049; fresh 500000–500049 |
+| 5.10 E1 | `modular_e1.py collect SET`, `modular_e1.sh cuda`, `modular_e1_report.py` | train 0–399; val 300000..; test 200000..; OOD 600000–600049; training seeds 0–2 |
+| 5.10 E3 | `modular_e3.sh cuda`, `modular_e3_report.py` | as E1; training seeds 0–2 |
+| 5.10 E2 | `modular_e2.py COND MODE`, `modular_e2.sh COND MODE...`, `modular_e2_report.py`, `modular_e2_rank.py`; `modular_e1.py collect explore`, `modular_e1.py finetune STEM DEVICE` | courses 600000–600049; explore 700000–700399 |
 
 Whole-task pipeline: `uv run python -m modular_sphere.tools.train_swarm` (see `--help`).
 
@@ -706,6 +810,10 @@ Whole-task pipeline: `uv run python -m modular_sphere.tools.train_swarm` (see `-
    effect models to rank plans by feasibility as well as makespan (STAP); effect models trained on
    course data; why DAgger rounds collapse on chained executors (the scripted labeler latches lift
    on a phase the features do not show, a candidate cause).
+5. Per-skill world models: online adaptation of the active skill's small model to unknown dynamics
+   (mass ×1.5) from a few episodes, against fine-tuning the large model (accuracy, time,
+   forgetting), then improvement of the executors in the adapted model; E1–E3 with five seeds and
+   a mixture-of-experts baseline.
 
 ## References
 
@@ -775,3 +883,9 @@ Whole-task pipeline: `uv run python -m modular_sphere.tools.train_swarm` (see `-
 32. A. Vahidi, A. Stefanopoulou, H. Peng. *Recursive least squares with forgetting for online
     estimation of vehicle mass and road grade: theory and experiments*. Vehicle System Dynamics
     43(1), 31–55, 2005.
+33. H. Zhou, J. Watson, A. Lei, I. Posner. *Benchmarking World Models for Continual Learning on
+    Compositional Tasks*. 2026. arXiv:2609.22055.
+34. M. Li, X. Zhang, C. Yang, Z. Zheng et al. *Prismatic World Model: Learning Compositional
+    Dynamics for Planning in Hybrid Systems*. 2025. arXiv:2512.08411.
+35. B. Zhang, W. Zhang, Z. Feng, W. Xiao et al. *Mixture-of-World Models: Scaling Multi-Task
+    Reinforcement Learning with Modular Latent Dynamics*. 2026. arXiv:2602.01270.

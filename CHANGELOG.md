@@ -8,6 +8,13 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- `swarm_modular`: swarm world models over sphere tokens in four kinds (`world`, `id`, `frame` in
+  the frame of each sphere's skill call, `modular` with one net per skill), episodes labelled with
+  the executed skill calls (`record_episode`, `Episodes`), open-loop unroll training (`fit`, also on
+  a parameter subset for continual learning), `HeldNoise` exploration, a chunk verifier
+  `WMVerifier` with `progress_cost`, and a MuJoCo oracle (`simulator_rollouts`,
+  `simulator_scorer`). Experiments E1–E3 (`docs/paper/experiments/modular_e*.py`) and paper
+  Section 5.10.
 - Working paper `docs/paper/skill_world_models.md` (methods, results with confidence intervals and
   paired tests, negative results, verified references) and its experiment scripts.
 - `swarm_skills`: `skill_features`, a cloned skill policy `SkillPrior`, a learned steps-to-go
