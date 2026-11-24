@@ -6,6 +6,8 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-24
+
 ### Added
 
 - `swarm_modular`: swarm world models over sphere tokens in four kinds (`world`, `id`, `frame` in
@@ -14,7 +16,7 @@ All notable changes to this project are documented here. The format follows
   a parameter subset for continual learning), `HeldNoise` exploration, a chunk verifier
   `WMVerifier` with `progress_cost`, and a MuJoCo oracle (`simulator_rollouts`,
   `simulator_scorer`). Experiments E1–E3 (`docs/paper/experiments/modular_e*.py`) and paper
-  Section 5.10.
+  Section 5.
 - Experiment E4 (online adaptation of the swarm world models to an unknown mass,
   `modular_e4.py`, `modular_e4.sh`, `modular_e4_report.py`), paper figures 1–5 from
   `docs/paper/experiments/modular_figures.py` in `docs/images/`, and illustrations in the README,
@@ -118,7 +120,8 @@ pretrained PPO2 model are removed (see "Migration" in the README).
 
 - First PyBullet prototype of the modular sphere.
 
-[Unreleased]: https://github.com/mcaniot/modular_sphere/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/mcaniot/modular_sphere/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/mcaniot/modular_sphere/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/mcaniot/modular_sphere/compare/0.0.2...v1.0.0
 [0.0.2]: https://github.com/mcaniot/modular_sphere/compare/0.0.1...0.0.2
 [0.0.1]: https://github.com/mcaniot/modular_sphere/releases/tag/0.0.1

@@ -481,7 +481,7 @@ wheels = [
 
 [[package]]
 name = "modular-sphere"
-version = "1.0.0"
+version = "1.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "gymnasium", extra = ["mujoco"] },
