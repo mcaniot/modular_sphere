@@ -49,6 +49,38 @@ def test_worker_protocol_in_process():
     assert not thread.is_alive()
 
 
+def test_close_terminates_hung_worker():
+    """close() tolerates a dead pipe and terminates a worker that does not exit."""
+
+    class Conn:
+        closed = False
+
+        def send(self, msg):
+            raise BrokenPipeError
+
+        def close(self):
+            self.closed = True
+
+    class Proc:
+        alive = True
+        terminated = False
+
+        def join(self, timeout=None):
+            if self.terminated:
+                self.alive = False
+
+        def is_alive(self):
+            return self.alive
+
+        def terminate(self):
+            self.terminated = True
+
+    vec = SwarmVecEnv.__new__(SwarmVecEnv)
+    vec._conns, vec._procs = [Conn()], [Proc()]
+    vec.close()
+    assert vec._conns[0].closed and vec._procs[0].terminated and not vec._procs[0].alive
+
+
 def test_vec_env_evaluate_and_mappo():
     vec = SwarmVecEnv(2, n_workers=1, envs_per_worker=2, time_penalty=0.01)
     try:
