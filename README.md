@@ -97,6 +97,120 @@ orange), tunnel (brown).*
 `WaypointPolicy` (PD on waypoints) solves every level; zero, random and straight-to-goal actions
 fail (`tests/test_courses.py`).
 
+### Swarm step climb (3D, multi-agent)
+
+`modular_sphere.swarm.SphereSwarmStepEnv` (PettingZoo `ParallelEnv`, factory `parallel_env`):
+`n_spheres` (default 4, ≥ 2) copies of the sphere must **all** gather in a zone (red disc, radius
+`0.2 √N` m) on a platform behind a 0.15 m step (x ≥ 0.5 m), like ants building a living ramp. The
+step is higher than the sphere radius, so no sphere can climb it alone, and the last sphere needs
+a partner already on the platform to pull it up. Arena walls are raised to 0.5 m.
+
+![Scripted swarm climb of four spheres](docs/images/modular_scene.png)
+
+- Action per agent `[fx, fy, lift, attach]` in [-1, 1]: world-frame x, y force in N (as in the
+  base contract), internal vertical force `lift × 6 N`, and a link request (`attach > 0`).
+- Attachment: two spheres whose surfaces are within 2 cm link when both request it and stay linked
+  while both keep requesting it. A link fixes the distance between the centres (ball-joint like):
+  each sphere can orbit around the other.
+- Lift is internal: the opposite force is split over the linked partners, so a lone sphere cannot
+  lift itself, but a sphere can pivot over a linked partner.
+- Local observation (world frame): `pos`, `vel`, `ang_vel`, `goal_rel` (3-D), then for each other
+  sphere in cyclic order relative position, relative velocity and linked flag
+  (`swarm.obs_slices(n)`); `state()` gives the global state for centralised critics.
+- Shared reward: progress of the mean sphere-goal 3D distance, step penalty, success bonus when
+  every sphere is on the platform inside the zone (`info["n_arrived"]` counts them); episodes last
+  `150 × N` steps.
+- `SwarmClimbPolicy` (scripted, centralised) solves it: a base sphere holds against the step, the
+  others climb over it one by one, and the last climber pulls the base up from the platform edge.
+
+```python
+from modular_sphere.swarm import SwarmClimbPolicy, parallel_env
+
+env = parallel_env(n_spheres=4)
+policy = SwarmClimbPolicy(4)
+obs, infos = env.reset(seed=0)
+while env.agents:
+    obs, rewards, terminations, truncations, infos = env.step(policy.act(obs))
+```
+
+#### Learning the swarm climb (world model + action learning)
+
+The scripted policy is then learned from state (extra `torch`), with one command:
+
+```bash
+uv run python -m modular_sphere.tools.train_swarm --spheres 4 --out-dir data/swarm
+```
+
+1. `swarm_data.collect`: expert episodes with DART noise (noisy execution, clean labels).
+2. `SwarmPolicy`: one decentralised network shared by all spheres (Deep Sets over the others),
+   behaviour cloning then DAgger rounds where the learner drives and the expert relabels.
+3. `collect(random_prob=...)`: exploration episodes where spheres hold random actions, then an
+   ensemble of `SwarmWorldModel` (interaction network over spheres with distances to the walls and
+   the step, per-sphere state delta and next links, unrolled multi-step loss) on all real data;
+   reward and success are computed from the predicted state.
+4. `improve_with_ppo`: PPO on rollouts of the frozen ensemble (MAPPO-style centralised critic,
+   team reward with a time penalty for speed, KL to the DAgger policy, ensemble-disagreement
+   penalty), run in chunks; the chunk with the best MuJoCo speed on separate selection seeds is
+   kept. `improve_in_imagination` (gradients through the model) remains available but exploits
+   the model on this task.
+5. Every policy is evaluated in MuJoCo on the same held-out seeds; `report.json` holds success,
+   the speed objective `speed_vs_expert` (expert steps / policy steps on success, 0 on failure)
+   and an exact McNemar test between the DAgger and PPO policies.
+
+Status (N = 4, 50 test seeds): DAgger and PPO both succeed on 47/50 (McNemar p = 1). PPO is faster:
+`speed_vs_expert` 0.919 -> 0.942, and on the 45 seeds both solve it needs 246.5 instead of 253.5
+steps on average, faster on 42 and slower on 1 (exact sign test p < 1e-4).
+
+#### MOSAIC: skills, skill world models and a parallel scheduler
+
+Courses: `swarm.Course` (step faces and rises) and `random_course` (1 to 3 steps) through the
+`course` option of `SphereSwarmStepEnv` (default: the single step, so default episodes are
+unchanged). MOSAIC splits the climb into three skills (roll, climb, pull). Each skill has a small
+world-action model (`swarm_wam.SkillWAM`), trained on scripted skill data and on skill-chaining
+data. A scheduler (`swarm_plan.SkillScheduler`) runs the skills in parallel lanes over subsets of
+spheres. It chooses the plan by the makespan predicted with steps-to-go effect models
+(`SkillValue`), replans level by level, and pulls back up any sphere that fell off the platform.
+Each skill call carries the frame of its step, so skills learned on one step run on any course.
+
+Results (paper: [`docs/paper/skill_world_models.md`](docs/paper/skill_world_models.md), 50 seeds,
+exact McNemar on success and sign test on steps against the expert):
+
+- **Test seeds (one step, N = 4):** 50/50 like the expert, in 147 steps against 248.
+- **Unknown random courses:** 50/50 like the expert, in about half the expert's steps.
+- **Fresh perturbed courses:** with a normalisation floor, training on noisy inputs, and chain data
+  with randomised mass, friction and rise mixed with the nominal data, MOSAIC matches the
+  expert's success in seven of nine conditions, at about half its steps. The conditions are
+  friction ×0.5 and ×1.5, mass ×1.5, rise 0.10 m and N = 5 or 6.
+- **Energy-shaped pull:** the skills' pull meters the lift by the base's specific energy
+  (energy-based swing-up, mass-free) instead of full lift, which dragged light helpers off the
+  edge. Retrained on its labels, MOSAIC solves 50/50 with spheres 30 % lighter (2/50 before) and
+  matches the expert in seven of nine conditions on fresh courses, always faster.
+- **Open limits:** under 5 mm of sensor noise MOSAIC solves 42/50 and with spheres 50 % heavier
+  44/50, against 50/50 for the expert.
+
+#### Swarm world models per skill (paper §5)
+
+`swarm_modular.SwarmWM` predicts the swarm from states and actions, either with one shared net
+or with one small net per skill (`modular`), with inputs in the world frame or in the frame of
+the skill call each sphere executes. Scripts: `docs/paper/experiments/modular_e*.py`; figures:
+`modular_figures.py`.
+
+- **Generalisation (E1):** the skill-call frame, not size, generalises: about five times lower
+  30-step error on unseen courses than world-frame models up to 19 M parameters.
+- **New skill (E3):** the modular model learns the pull skill without forgetting the others
+  (+0.0 cm against +6 to +24 cm for shared models).
+- **Negative (E2):** verifying the executors' action chunks with any world model, even MuJoCo
+  itself, does not improve success.
+- **Neutral (E4):** adapting to an unknown mass, two episodes suffice for every fully fine-tuned framed
+  model, and the modular one is not better than a large framed model (worse with one episode at mass
+  x1.5, better only at mass x0.7 with two); forgetting (1-5 cm) depends on the condition.
+
+<p align="center">
+  <img src="docs/images/modular_e1.png" width="49%" alt="E1: open-loop error against horizon">
+  <img src="docs/images/modular_e3.png" width="49%" alt="E3: forgetting when adding the pull skill">
+  <img src="docs/images/modular_e4.png" width="60%" alt="E4: adaptation to an unknown mass">
+</p>
+
 ## Simulation contract
 
 | Item | Value |

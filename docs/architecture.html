@@ -46,7 +46,7 @@
 </header>
 <nav>
   <a href="#vue">Overview</a><a href="#sim">Simulation</a><a href="#env">Environment</a>
-  <a href="#courses">Courses</a><a href="#data">Data</a><a href="#wm">World models</a>
+  <a href="#courses">Courses</a><a href="#swarm">Swarm</a><a href="#data">Data</a><a href="#wm">World models</a>
   <a href="#render">Rendering</a><a href="#cli">CLI</a><a href="#tests">Tests</a>
   <a href="#tools">Tools</a><a href="#flux">Full flow</a>
 </nav>
@@ -179,6 +179,11 @@ of the observation: it puts the simulator back in the described state (used by t
 (<code>F = 3·(v_des − v) + 0.69·v_des</code>). It serves as proof that every level is feasible.</p>
 <div class="note warn">The reward is still "distance to goal": it ignores walls. On L4/L5, rushing toward the goal is a local trap
 (the sphere must first go to the plate) — this is intended, to test exploration.</div>
+
+<h2 id="swarm">4 bis. The swarm — <code>swarm.py</code>, <code>swarm_skills.py</code>, <code>swarm_plan.py</code>, <code>swarm_modular.py</code></h2>
+<p>N linked spheres must all climb a step higher than one sphere can (<code>SphereSwarmStepEnv</code>, PettingZoo). The scripted expert is split into skills (roll, climb, pull) run in parallel by <code>SkillScheduler</code>; <code>swarm_modular.py</code> holds the swarm world models (one small net per skill, expressed in the skill-call frame, or one shared net). Results: <code>docs/paper/skill_world_models.md</code>.</p>
+<p><img src="images/modular_scene.png" alt="Scripted swarm climb of four spheres" style="width:100%;border-radius:6px"></p>
+<p><img src="images/modular_e1.png" alt="Open-loop error of the swarm world models against horizon" style="width:100%;border-radius:6px"></p>
 
 <h2 id="data">5. The data — <code>dataset.py</code></h2>
 <div class="flow"><span><b>exploration_action</b>: OU noise OR noisy PD</span>→<span><b>collect</b>: N episodes × T steps</span>→<span><b>TrajectoryDataset</b></span>→<span><b>.npz</b> + JSON metadata</span></div>

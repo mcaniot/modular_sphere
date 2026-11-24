@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "modular-sphere"
-version = "1.0.0"
+version = "1.1.0"
 description = "MuJoCo simulation of a modular sphere robot and a world-model test bench"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -15,6 +15,7 @@ dependencies = [
     "imageio[ffmpeg]>=2.38",
     "gymnasium[mujoco]>=1.0",
     "numpy>=1.24",
+    "pettingzoo>=1.25",
 ]
 keywords = ["mujoco", "robotics", "world model", "model-based RL", "gymnasium"]
 classifiers = [
