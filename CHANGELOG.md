@@ -15,6 +15,10 @@ All notable changes to this project are documented here. The format follows
   `WMVerifier` with `progress_cost`, and a MuJoCo oracle (`simulator_rollouts`,
   `simulator_scorer`). Experiments E1–E3 (`docs/paper/experiments/modular_e*.py`) and paper
   Section 5.10.
+- Experiment E4 (online adaptation of the swarm world models to an unknown mass,
+  `modular_e4.py`, `modular_e4.sh`, `modular_e4_report.py`), paper figures 1–5 from
+  `docs/paper/experiments/modular_figures.py` in `docs/images/`, and illustrations in the README,
+  the paper and `docs/architecture.html`.
 - Working paper `docs/paper/skill_world_models.md` (methods, results with confidence intervals and
   paired tests, negative results, verified references) and its experiment scripts.
 - `swarm_skills`: `skill_features`, a cloned skill policy `SkillPrior`, a learned steps-to-go

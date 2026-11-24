@@ -105,6 +105,8 @@ fail (`tests/test_courses.py`).
 step is higher than the sphere radius, so no sphere can climb it alone, and the last sphere needs
 a partner already on the platform to pull it up. Arena walls are raised to 0.5 m.
 
+![Scripted swarm climb of four spheres](docs/images/modular_scene.png)
+
 - Action per agent `[fx, fy, lift, attach]` in [-1, 1]: world-frame x, y force in N (as in the
   base contract), internal vertical force `lift × 6 N`, and a link request (`attach > 0`).
 - Attachment: two spheres whose surfaces are within 2 cm link when both request it and stay linked
@@ -185,6 +187,29 @@ exact McNemar on success and sign test on steps against the expert):
   matches the expert in seven of nine conditions on fresh courses, always faster.
 - **Open limits:** under 5 mm of sensor noise MOSAIC solves 42/50 and with spheres 50 % heavier
   44/50, against 50/50 for the expert.
+
+#### Swarm world models per skill (paper §5)
+
+`swarm_modular.SwarmWM` predicts the swarm from states and actions, either with one shared net
+or with one small net per skill (`modular`), with inputs in the world frame or in the frame of
+the skill call each sphere executes. Scripts: `docs/paper/experiments/modular_e*.py`; figures:
+`modular_figures.py`.
+
+- **Generalisation (E1):** the skill-call frame, not size, generalises: about five times lower
+  30-step error on unseen courses than world-frame models up to 19 M parameters.
+- **New skill (E3):** the modular model learns the pull skill without forgetting the others
+  (+0.0 cm against +6 to +24 cm for shared models).
+- **Negative (E2):** verifying the executors' action chunks with any world model, even MuJoCo
+  itself, does not improve success.
+- **Neutral (E4):** adapting to an unknown mass, two episodes suffice for every fully fine-tuned framed
+  model, and the modular one is not better than a large framed model (worse with one episode at mass
+  x1.5, better only at mass x0.7 with two); forgetting (1-5 cm) depends on the condition.
+
+<p align="center">
+  <img src="docs/images/modular_e1.png" width="49%" alt="E1: open-loop error against horizon">
+  <img src="docs/images/modular_e3.png" width="49%" alt="E3: forgetting when adding the pull skill">
+  <img src="docs/images/modular_e4.png" width="60%" alt="E4: adaptation to an unknown mass">
+</p>
 
 ## Simulation contract
 
