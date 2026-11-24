@@ -105,6 +105,14 @@ fail (`tests/test_courses.py`).
 step is higher than the sphere radius, so no sphere can climb it alone, and the last sphere needs
 a partner already on the platform to pull it up. Arena walls are raised to 0.5 m.
 
+<p align="center">
+  <img src="docs/images/swarm_climb.gif" width="45%" alt="Scripted expert: four linked spheres climb the step and gather in the red zone">
+  <img src="docs/images/swarm_mosaic.gif" width="45%" alt="MOSAIC with learned skill executors on an unseen random three-step course">
+</p>
+
+*Left: scripted expert on the training step. Right: MOSAIC (learned per-skill executors, parallel
+scheduler) solving an unseen random course of three steps zero-shot.*
+
 ![Scripted swarm climb of four spheres](docs/images/modular_scene.png)
 
 - Action per agent `[fx, fy, lift, attach]` in [-1, 1]: world-frame x, y force in N (as in the

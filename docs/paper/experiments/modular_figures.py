@@ -1,8 +1,9 @@
 """Figures of the paper's swarm world-model experiments (E1-E4) and a swarm climb filmstrip.
 
 Usage: uv run --with matplotlib python docs/paper/experiments/modular_figures.py [NAME ...]
-(NAME among scene, e1, e2, e3, e4; all by default). Reads data/swarm/modular/{e1,e3}.pkl,
-e2_report.md, e4_*.pkl; writes docs/images/modular_*.png.
+(NAME among scene, e1, e2, e3, e4, gifs; all by default). Reads data/swarm/modular/{e1,e3}.pkl,
+e2_report.md, e4_*.pkl and, for gifs, the MOSAIC models in data/swarm/skills; writes
+docs/images/modular_*.png and swarm_{climb,mosaic}.gif.
 """
 
 import pickle
@@ -57,6 +58,63 @@ def scene():
     fig.suptitle(f"Scripted swarm climb, four linked spheres ({t} steps, 20 Hz)")
     fig.tight_layout()
     fig.savefig(IMG / "modular_scene.png", dpi=130)
+
+
+def _gif(env, act, path, cam, every=4):
+    import imageio.v2 as imageio
+    import mujoco
+
+    ren = mujoco.Renderer(env.model, 300, 400)
+    frames, t, info = [], 0, {}
+    while env.agents:
+        if t % every == 0:
+            ren.update_scene(env.data, cam)
+            frames.append(ren.render().copy())
+        info = act()
+        t += 1
+    ren.update_scene(env.data, cam)
+    frames += [ren.render().copy()] * 10  # hold the last frame
+    imageio.mimwrite(path, frames, duration=1000 * every * 0.05, loop=0)
+    return t, info
+
+
+def gifs(seed=600003):
+    """Scripted climb of the single step, and MOSAIC (learned WAM executors) on a random course."""
+    import mujoco
+
+    from modular_sphere.swarm import SphereSwarmStepEnv, SwarmClimbPolicy, random_course
+    from modular_sphere.swarm_plan import EffectModel, SkillScheduler, wam_executor
+    from modular_sphere.swarm_skills import SKILLS, SkillValue
+    from modular_sphere.swarm_wam import SkillWAM
+
+    cam = mujoco.MjvCamera()
+    cam.lookat[:] = (0.1, 0.0, 0.0)
+    cam.distance, cam.azimuth, cam.elevation = 4.4, -65.0, -35.0
+    env = SphereSwarmStepEnv(4)
+    obs, _ = env.reset(seed=3)
+    pol = SwarmClimbPolicy(4, env.radius)
+    state = {"obs": obs}
+
+    def scripted():
+        state["obs"], _, _, _, infos = env.step(pol.act(state["obs"]))
+        return infos[env.possible_agents[0]]
+
+    print("climb", _gif(env, scripted, IMG / "swarm_climb.gif", cam))
+    skills = ROOT / "data/swarm/skills"
+    effect = EffectModel({s: SkillValue.load(f"{skills}/value_{s}.pt") for s in SKILLS})
+    wams = {s: SkillWAM.load(f"{skills}/chain_wam_mixe_r0_{s}.pt") for s in SKILLS}
+    course = random_course(np.random.default_rng(seed))
+    env = SphereSwarmStepEnv(n_spheres=4, course=course)
+    state["obs"], _ = env.reset(seed=seed)
+    sched = SkillScheduler(4, effect, wam_executor(wams))
+    sched.reset(env.spheres()[:, :3], env.goal, course)
+
+    def mosaic():
+        a = sched.act([state["obs"][x] for x in env.possible_agents], env.spheres(), env.links)
+        state["obs"], _, _, _, infos = env.step(dict(zip(env.possible_agents, a, strict=True)))
+        return infos[env.possible_agents[0]]
+
+    print("mosaic", course, _gif(env, mosaic, IMG / "swarm_mosaic.gif", cam))
 
 
 def e1():
@@ -188,6 +246,6 @@ def e4():
 
 
 if __name__ == "__main__":
-    for name in sys.argv[1:] or ["scene", "e1", "e2", "e3", "e4"]:
+    for name in sys.argv[1:] or ["scene", "e1", "e2", "e3", "e4", "gifs"]:
         globals()[name]()
-        print(f"docs/images/modular_{name}.png")
+        print(f"done {name}")

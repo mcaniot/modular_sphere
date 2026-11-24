@@ -19,7 +19,8 @@ All notable changes to this project are documented here. The format follows
   Section 5.
 - Experiment E4 (online adaptation of the swarm world models to an unknown mass,
   `modular_e4.py`, `modular_e4.sh`, `modular_e4_report.py`), paper figures 1–5 from
-  `docs/paper/experiments/modular_figures.py` in `docs/images/`, and illustrations in the README,
+  `docs/paper/experiments/modular_figures.py` in `docs/images/`, animated swarm GIFs (scripted
+  climb, MOSAIC on an unseen random course), and illustrations in the README,
   the paper and `docs/architecture.html`.
 - Working paper `docs/paper/skill_world_models.md` (methods, results with confidence intervals and
   paired tests, negative results, verified references) and its experiment scripts.
