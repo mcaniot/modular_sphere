@@ -1,9 +1,9 @@
 """Figures of the paper's swarm world-model experiments (E1-E4) and a swarm climb filmstrip.
 
 Usage: uv run --with matplotlib python docs/paper/experiments/modular_figures.py [NAME ...]
-(NAME among scene, e1, e2, e3, e4, gifs; all by default). Reads data/swarm/modular/{e1,e3}.pkl,
-e2_report.md, e4_*.pkl and, for gifs, the MOSAIC models in data/swarm/skills; writes
-docs/images/modular_*.png and swarm_{climb,mosaic}.gif.
+(NAME among scene, arch, e1, e2, e3, e4, gifs; all by default). Reads
+data/swarm/modular/{e1,e3}.pkl, e2_report.md, e4_*.pkl and, for gifs, the MOSAIC models in
+data/swarm/skills; writes docs/images/modular_*.png and swarm_{climb,mosaic}.gif.
 """
 
 import pickle
@@ -245,7 +245,258 @@ def e4():
     fig.savefig(IMG / "modular_e4.png", dpi=130)
 
 
+def _box(ax, x, y, w, h, text="", fc="white", ec="#333333", fs=7.5, rot=0, lw=0.8, ls="-", r=0.6):
+    from matplotlib.patches import FancyBboxPatch
+
+    ax.add_patch(
+        FancyBboxPatch(
+            (x, y), w, h, boxstyle=f"round,pad=0,rounding_size={r}", fc=fc, ec=ec, lw=lw, ls=ls
+        )
+    )
+    if text:
+        ax.text(x + w / 2, y + h / 2, text, ha="center", va="center", fontsize=fs, rotation=rot)
+
+
+def _arrow(ax, a, b, style="-|>", color="#333333", lw=0.9, rad=0.0, ls="-"):
+    from matplotlib.patches import FancyArrowPatch
+
+    ax.add_patch(
+        FancyArrowPatch(
+            a,
+            b,
+            arrowstyle=style,
+            mutation_scale=8,
+            color=color,
+            lw=lw,
+            ls=ls,
+            connectionstyle=f"arc3,rad={rad}",
+            shrinkA=0,
+            shrinkB=0,
+        )
+    )
+
+
+def _add(ax, x, y, r=1.0):
+    from matplotlib.patches import Circle
+
+    ax.add_patch(Circle((x, y), r, fc="white", ec="#333333", lw=0.8))
+    ax.text(x, y, "+", ha="center", va="center", fontsize=8)
+
+
+def arch():
+    """Architecture of the swarm world models (`swarm_modular.SwarmWM`), paper style."""
+    from matplotlib.patches import Circle, Polygon
+
+    skill_c = {"idle": "#9e9e9e", "roll": "#4c72b0", "climb": "#dd8452", "pull": "#55a868"}
+    c_state, c_act, c_rise, c_emb = "#cfe2f3", "#fde3c7", "#d9ead3", "#e8dff5"
+    fig, ax = plt.subplots(figsize=(14, 5.4))
+    ax.set_xlim(0, 134)
+    ax.set_ylim(0, 52)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    title = {"fontsize": 9.5, "fontweight": "bold", "ha": "left"}
+
+    # (a) skill-call frame
+    ax.text(0.5, 49.5, "(a) Skill-call frame", **title)
+    ax.add_patch(
+        Polygon(
+            [(1, 18), (15, 18), (15, 24), (28, 24), (28, 16.5), (1, 16.5)],
+            fc="#e6e6e6",
+            ec="#777777",
+            lw=0.8,
+        )
+    )
+    spheres = {
+        "A": (5, 19.6, "roll"),
+        "B": (13.3, 19.6, "climb"),
+        "C": (10.6, 22.2, "climb"),
+        "D": (21, 25.6, "pull"),
+        "E": (25.5, 25.6, "pull"),
+    }
+    ax.plot([13.3, 10.6], [19.6, 22.2], color="#222222", lw=1.6, zorder=3)
+    ax.plot([21, 25.5], [25.6, 25.6], color="#222222", lw=1.6, zorder=3)
+    for k, (x, y, s) in spheres.items():
+        ax.add_patch(Circle((x, y), 1.6, fc=skill_c[s], ec="#222222", lw=0.7, zorder=4))
+        ax.text(x, y, k, ha="center", va="center", fontsize=6.5, color="white", zorder=5)
+    ox, oy = 15, 24
+    ax.plot(ox, oy, "k*", ms=7, zorder=6)
+    _arrow(ax, (ox, oy), (ox + 4, oy), color="black")
+    _arrow(ax, (ox, oy), (ox, oy + 4), color="black")
+    ax.text(ox + 4.3, oy - 0.3, "x'", fontsize=7)
+    ax.text(ox - 1.6, oy + 4, "z'", fontsize=7)
+    ax.text(ox - 0.8, oy + 0.9, "$o_c$", fontsize=8, ha="right")
+    _arrow(ax, (ox, oy), (12.1, 22.6), color="#c0392b", lw=1.2)
+    ax.text(5.5, 25.8, "$p_C - o_c$", fontsize=8, color="#c0392b")
+    ax.text(
+        14,
+        12.2,
+        "climb call c: origin $o_c$ at the step edge, rise 0.15 m",
+        fontsize=7,
+        ha="center",
+    )
+    ax.text(
+        14,
+        9.4,
+        "inputs of sphere $i$ relative to the call\n"
+        "it executes (idle: its own position);\nlinks (black) bias the attention",
+        fontsize=7,
+        ha="center",
+        va="top",
+    )
+    for j, (s, c) in enumerate(skill_c.items()):
+        ax.add_patch(Circle((3 + 7 * j, 34), 1.1, fc=c, ec="#222222", lw=0.6))
+        ax.text(4.5 + 7 * j, 34, s, fontsize=7, va="center")
+    ax.text(0.8, 37.5, "skill executed by each sphere", fontsize=7)
+
+    # (b) one prediction step
+    ax.text(31, 49.5, "(b) One step of the swarm world model (frame, modular)", **title)
+    _box(ax, 30.5, 0.3, 72, 47.2, fc="none", ec="#bbbbbb", lw=0.6, ls="--", r=1.2)
+    rows = [("1", 37.0), ("2", 31.5), ("N", 21.5)]
+    for lab, y in rows:
+        _box(ax, 33, y, 7, 3.2, "$x_i - o_{c(i)}$", fc=c_state, fs=6.5, r=0.3)
+        _box(ax, 40, y, 4, 3.2, "$a_i$", fc=c_act, fs=6.5, r=0.3)
+        _box(ax, 44, y, 2, 3.2, "$r$", fc=c_rise, fs=6.5, r=0.3)
+        ax.text(32.3, y + 1.6, lab, fontsize=7, ha="right", va="center")
+        _arrow(ax, (46.2, y + 1.6), (48.3, y + 1.6))
+    ax.text(39.5, 27.3, "⋮", fontsize=11, ha="center", va="center")
+    ax.text(36.5, 41.2, "9", fontsize=6.5, ha="center")
+    ax.text(42, 41.2, "4", fontsize=6.5, ha="center")
+    ax.text(45, 41.2, "1", fontsize=6.5, ha="center")
+    ax.text(39.5, 44, "sphere tokens (14-D)", fontsize=7.5, ha="center")
+    ax.text(
+        33,
+        17.6,
+        "state: pos, vel, ang_vel (normalised)\naction: fx, fy, lift, attach\n"
+        "r: rise of the call's step",
+        fontsize=6.5,
+        va="top",
+    )
+    _box(ax, 33, 6, 13, 3.4, "skill, role of $c(i)$", fc=c_emb, fs=6.5, r=0.3)
+    _box(ax, 48.5, 19, 3.4, 23, "Linear 14→w", fc="white", fs=7, rot=90)
+    _box(ax, 48.5, 6, 3.4, 3.4, "Emb", fc=c_emb, fs=6.5)
+    _arrow(ax, (46.2, 7.7), (48.3, 7.7))
+    _add(ax, 55, 30.5)
+    _arrow(ax, (52.1, 30.5), (53.9, 30.5))
+    _arrow(ax, (51.9, 7.7), (55, 7.7), style="-")
+    _arrow(ax, (55, 7.7), (55, 29.4))
+    _arrow(ax, (56.1, 30.5), (58.4, 30.5))
+    ax.text(55.6, 14, "8 categories", fontsize=6, rotation=90, va="bottom")
+
+    # transformer block
+    _box(ax, 58.5, 17, 26, 23, fc="#f7f7f7", ec="#555555", lw=0.8, r=1.0)
+    ax.text(84.9, 38.3, "L $\\times$", fontsize=9, fontweight="bold")
+    ax.text(71.5, 15.6, "pre-LN transformer block", fontsize=7.5, ha="center", va="top")
+    blocks = [
+        (59.5, 3, "LayerNorm", "white", 90),
+        (63, 5.6, "Multi-\nhead\natten-\ntion", "#fbe5d6", 0),
+        (72, 3, "LayerNorm", "white", 90),
+        (75.5, 5, "MLP\n4w\nGELU", "#dae8fc", 0),
+    ]
+    for x, w, t, c, rot in blocks:
+        _box(ax, x, 24, w, 13, t, fc=c, fs=6.5, rot=rot)
+    _arrow(ax, (62.5, 30.5), (63, 30.5))
+    _add(ax, 70.3, 30.5, 0.9)
+    _arrow(ax, (68.6, 30.5), (69.4, 30.5))
+    _arrow(ax, (71.2, 30.5), (72, 30.5))
+    _arrow(ax, (75, 30.5), (75.5, 30.5))
+    _add(ax, 82.3, 30.5, 0.9)
+    _arrow(ax, (80.5, 30.5), (81.4, 30.5))
+    # residual paths
+    _arrow(ax, (58.8, 30.5), (58.8, 20), style="-")
+    _arrow(ax, (58.8, 20), (70.3, 20), style="-")
+    _arrow(ax, (70.3, 20), (70.3, 29.6))
+    _arrow(ax, (71.6, 22), (82.3, 22), style="-")
+    _arrow(ax, (71.6, 30.5), (71.6, 22), style="-")
+    _arrow(ax, (82.3, 22), (82.3, 29.6))
+    # attention bias inset
+    import numpy as np
+
+    lk = np.array([[0, 1, 0, 0], [1, 0, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]])
+    ax.imshow(
+        lk,
+        extent=(63.8, 67.8, 41.5, 45.5),
+        cmap="Greys",
+        vmin=0,
+        vmax=1.6,
+        interpolation="nearest",
+        zorder=3,
+    )
+    ax.text(68.4, 44.6, "links $\\ell_{ij}$", fontsize=6.5, va="center")
+    ax.text(
+        68.4,
+        42.4,
+        "bias $w_{l,h}\\,\\ell_{ij}$ (+ mask: same call\nonly, modular)",
+        fontsize=6.2,
+        va="center",
+    )
+    _arrow(ax, (65.8, 41.3), (65.8, 37.2), color="#c0392b")
+    _arrow(ax, (83.2, 30.5), (87, 30.5))
+    # head and update
+    _box(ax, 87.2, 24, 3.2, 13, "Linear w→9", fc="white", fs=7, rot=90)
+    _arrow(ax, (90.4, 30.5), (91.3, 30.5))
+    _box(ax, 91.5, 27.5, 10, 6, "$\\widehat{\\Delta x}_i$ (9)\nde-normalise", fc=c_state, fs=6.8)
+    _arrow(ax, (96.5, 27.3), (96.5, 22.3))
+    _box(ax, 90.5, 16.5, 12, 5.6, "$\\hat x_i^{t+1} = x_i^t + \\Delta x_i$", fc="#fff2cc", fs=7.2)
+    ax.text(
+        96.5, 14.5, "reward, success:\nanalytic from $\\hat x$", fontsize=6.3, ha="center", va="top"
+    )
+    _arrow(ax, (96.5, 4.8), (36.5, 4.8), color="#c0392b", ls="--")
+    _arrow(ax, (96.5, 10.4), (96.5, 4.8), style="-", color="#c0392b", ls="--")
+    _arrow(ax, (36.5, 4.8), (36.5, 5.8), color="#c0392b", ls="--")
+    ax.text(
+        66,
+        3.9,
+        "open-loop unroll: $\\hat{x}^{t+1}$ fed back; actions, links and calls given "
+        "(loss over 8 steps, evaluation at 30)",
+        fontsize=6.5,
+        ha="center",
+        va="top",
+        color="#c0392b",
+    )
+
+    # (c) the four kinds
+    ax.text(105, 49.5, "(c) Four model kinds", **title)
+    kinds = [
+        ("world", "$[x_i, a_i]$ world frame\n+ course-face tokens", "1 net"),
+        ("id", "world + Emb(skill, role)", "1 net"),
+        ("frame", "$[x_i - o_{c(i)}, a_i, r]$\n+ Emb(skill, role)", "1 net"),
+        ("modular", "frame inputs, routed by skill", None),
+    ]
+    for j, (k, inp, nets) in enumerate(kinds):
+        y = 40 - 10.5 * j
+        _box(ax, 105, y, 28, 8.5, fc="white", ec=COLORS[k], lw=1.4, r=0.8)
+        ax.text(106, y + 7, k, fontsize=8, fontweight="bold", color=COLORS[k], va="center")
+        ax.text(106, y + 3.4, inp, fontsize=6.5, va="center")
+        if nets:
+            _box(ax, 125.5, y + 1.5, 6.5, 5.5, nets, fc="#f7f7f7", fs=6.3)
+        else:
+            for m, (s, c) in enumerate(skill_c.items()):
+                _box(
+                    ax,
+                    122.5 + 2.6 * m,
+                    y + 1.2,
+                    2.2,
+                    5.4,
+                    s,
+                    fc=c,
+                    ec="#333333",
+                    fs=5.2,
+                    rot=90,
+                    r=0.3,
+                )
+    ax.text(
+        105,
+        5.6,
+        "Same data, same unroll loss; model size\nvaries by width $\\times$ layers "
+        "(0.4 M to 19 M).\nmodular: one expert per skill, each\nsphere predicted by the "
+        "expert of its call.",
+        fontsize=6.5,
+        va="top",
+    )
+    fig.savefig(IMG / "modular_arch.png", dpi=200, bbox_inches="tight", pad_inches=0.05)
+
+
 if __name__ == "__main__":
-    for name in sys.argv[1:] or ["scene", "e1", "e2", "e3", "e4", "gifs"]:
+    for name in sys.argv[1:] or ["scene", "arch", "e1", "e2", "e3", "e4", "gifs"]:
         globals()[name]()
         print(f"done {name}")

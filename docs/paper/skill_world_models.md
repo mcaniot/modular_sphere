@@ -153,6 +153,12 @@ with a learned link-attention bias (`SwarmWM`):
 All four predict the next state of every sphere from the current state, the link flags and the action;
 the reward and success are computed analytically from the predicted state.
 
+![Architecture of the swarm world models](../images/modular_arch.png)
+
+*Figure 2. (a) Skill-call frame. (b) One step of the swarm world model (`frame`, `modular`):
+sphere tokens and a skill-role embedding, L pre-LN transformer blocks with link-biased attention,
+linear head on the state change, open-loop unroll. (c) The four model kinds.*
+
 ### 4.3 Training and evaluation
 
 Open-loop unroll loss over windows of 8 steps, 40 epochs, three training seeds per variant. The main metric is the open-loop position RMSE at 30 steps
@@ -202,7 +208,7 @@ random courses. At one step the large models are better in distribution (0.12 cm
 
 ![E1 open-loop error against horizon](../images/modular_e1.png)
 
-*Figure 2. E1: position RMSE against the open-loop horizon (mean, band = range over three training
+*Figure 3. E1: position RMSE against the open-loop horizon (mean, band = range over three training
 seeds). World-frame models (orange, yellow) diverge on unseen courses whatever their size; the
 framed ones (purple, green) do not.*
 
@@ -232,7 +238,7 @@ modular pull net is also the most accurate on pull (6.9 ± 0.2 cm against 14.0 a
 
 ![E3 forgetting and learning of the pull skill](../images/modular_e3.png)
 
-*Figure 3. E3: 30-step error on test windows without pull (left, forgetting) and with pull
+*Figure 4. E3: 30-step error on test windows without pull (left, forgetting) and with pull
 (right, the new skill) before and after adding pull (mean ± std, three seeds).*
 
 **Takeaway.** Adding the pull skill to the per-skill model leaves what it knew unchanged (0.0 cm
@@ -285,7 +291,7 @@ supported.
 
 ![E4 adaptation curves and forgetting](../images/modular_e4.png)
 
-*Figure 4. E4: held-out 30-step error after adapting to mass ×0.7 and ×1.5 with k episodes (top)
+*Figure 5. E4: held-out 30-step error after adapting to mass ×0.7 and ×1.5 with k episodes (top)
 and error on the nominal test set (bottom, forgetting); 400 updates at lr 3·10⁻⁴, mean ± std over
 three seeds.*
 
@@ -326,7 +332,7 @@ improves the fit of the large models (loss 0.82 → 0.24) more than that of the 
 
 ![E2 closed-loop success with and without a world-model verifier](../images/modular_e2.png)
 
-*Figure 5. E2: successes on 50 paired random courses with the executors alone (MOSAIC) and with
+*Figure 6. E2: successes on 50 paired random courses with the executors alone (MOSAIC) and with
 each verifier (exact McNemar p against MOSAIC).*
 
 **Takeaway (negative).** Verification does not help, whatever the model: no world model changes success,
