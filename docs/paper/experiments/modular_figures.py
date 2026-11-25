@@ -1,7 +1,7 @@
 """Figures of the paper's swarm world-model experiments (E1-E4) and a swarm climb filmstrip.
 
 Usage: uv run --with matplotlib python docs/paper/experiments/modular_figures.py [NAME ...]
-(NAME among scene, arch, e1, e2, e3, e4, gifs; all by default). Reads
+(NAME among scene, arch, mosaic, e1, e2, e3, e4, gifs; all by default). Reads
 data/swarm/modular/{e1,e3}.pkl, e2_report.md, e4_*.pkl and, for gifs, the MOSAIC models in
 data/swarm/skills; writes docs/images/modular_*.png and swarm_{climb,mosaic}.gif.
 """
@@ -20,7 +20,15 @@ ROOT = Path(__file__).resolve().parents[3]
 OUT = ROOT / "data/swarm/modular"
 IMG = ROOT / "docs/images"
 COLORS = {"modular": "#1b9e77", "frame": "#7570b3", "id": "#e6ab02", "world": "#d95f02"}
+MOSAIC = "#c0392b"  # the MOSAIC system in every figure
+SKILLS = ROOT / "data/swarm/skills"
 plt.rcParams.update({"font.size": 9, "axes.spines.top": False, "axes.spines.right": False})
+
+
+def label(v):
+    """Legend name of a world-model variant; the per-skill one is the MOSAIC-style model."""
+    s = v.replace("_", " ")
+    return f"{s} (per skill, MOSAIC-style)" if v.startswith("modular") else s
 
 
 def rmse(e, axis=None):
@@ -136,7 +144,8 @@ def e1():
             curves = np.array([rmse(e, (0, 2)) for e in runs])
             kind = v.split("_")[0]
             ls = ":" if v == "world_512x6" else ("--" if v.endswith("128x2") else "-")
-            ax.plot(h, curves.mean(0), ls, color=COLORS[kind], label=v.replace("_", " "))
+            lw = 2.4 if kind == "modular" else 1.4
+            ax.plot(h, curves.mean(0), ls, color=COLORS[kind], label=label(v), lw=lw)
             if len(curves) > 1:
                 ax.fill_between(h, curves.min(0), curves.max(0), color=COLORS[kind], alpha=0.15)
         ax.set_title({"test": "test (in distribution)", "courses": "unseen 1-3 step courses",
@@ -159,12 +168,13 @@ def e2():
     for ax, cond, title in zip(axes, ("noise0.005", "mass1.5"), ("noise 5 mm", "mass x1.5"),
                                strict=True):  # fmt: skip
         sel = {c[1].strip(): c for c in rows if c[0].strip() == cond and c[1].strip() in labels}
-        names = ["MOSAIC alone"] + [labels[m] for m in labels]
+        names = ["MOSAIC alone (reference)"] + [labels[m] for m in labels]
         base = int(next(iter(sel.values()))[3].split("/")[0])
         vals = [base] + [int(sel[m][2].split("/")[0]) for m in labels]
         ps = [None] + [float(sel[m][6]) for m in labels]
-        cols = ["#999999", "#444444"] + [COLORS[labels[m].split()[0]] for m in list(labels)[1:]]
+        cols = [MOSAIC, "#444444"] + [COLORS[labels[m].split()[0]] for m in list(labels)[1:]]
         bars = ax.barh(names, vals, color=cols)
+        ax.axvline(base, color=MOSAIC, ls="--", lw=1)
         for b, p in zip(bars, ps, strict=True):
             pv = "" if p is None else ("  p<0.001" if p < 1e-3 else f"  p={p:.2g}")
             txt = f"{b.get_width():.0f}/50{pv}"
@@ -176,7 +186,7 @@ def e2():
         ax.set_title(title)
         ax.set_xlabel("successes on 50 paired random courses")
     fig.suptitle(
-        "E2 (negative): verifying executor chunks with a world model, exact McNemar vs MOSAIC"
+        "E2 (negative): MOSAIC alone vs MOSAIC + world-model verifier (exact McNemar vs MOSAIC)"
     )
     fig.tight_layout()
     fig.savefig(IMG / "modular_e2.png", dpi=130)
@@ -194,7 +204,7 @@ def e3():
             ax.bar(x + (j - 1) * 0.27, np.mean(v, 1), 0.27, yerr=np.std(v, 1), label=lab,
                    color=["#cccccc", "#88aacc", "#335577"][j], capsize=2)  # fmt: skip
     for ax, t in zip(axes, ("known skills (forgetting)", "new skill: pull"), strict=True):
-        ax.set_xticks(x, [m.replace("_", " ") for m in models])
+        ax.set_xticks(x, [label(m).replace(" (", "\n(") for m in models], fontsize=7.5)
         ax.set_title(t)
     axes[0].set_ylabel("h30 position RMSE [cm]")
     axes[0].legend(fontsize=7, frameon=False)
@@ -226,7 +236,8 @@ def e4():
                 v = np.array([[rmse(res[cond, arm, s, 0.0 if k == 0 else lr, k][key]) for k in ks]
                               for s in seeds])  # fmt: skip
                 axes[i, j].errorbar(np.array(ks) + 0.5, v.mean(0), v.std(0), fmt=ls,
-                                    color=COLORS[kind], label=arm.replace("_", " "),
+                                    color=COLORS[kind], label=label(arm),
+                                    lw=2.4 if kind == "modular" else 1.4,
                                     capsize=2)  # fmt: skip
         axes[0, j].set_title(f"{cond.replace('mass', 'mass x')}: held-out episodes")
         axes[1, j].set_title("nominal test (forgetting)")
@@ -284,219 +295,222 @@ def _add(ax, x, y, r=1.0):
 
 
 def arch():
-    """Architecture of the swarm world models (`swarm_modular.SwarmWM`), paper style."""
-    from matplotlib.patches import Circle, Polygon
-
-    skill_c = {"idle": "#9e9e9e", "roll": "#4c72b0", "climb": "#dd8452", "pull": "#55a868"}
-    c_state, c_act, c_rise, c_emb = "#cfe2f3", "#fde3c7", "#d9ead3", "#e8dff5"
-    fig, ax = plt.subplots(figsize=(14, 5.4))
-    ax.set_xlim(0, 134)
-    ax.set_ylim(0, 52)
-    ax.set_aspect("equal")
+    """SwarmWM: state flow, exact residual block, and variant inputs/routing."""
+    fig, ax = plt.subplots(figsize=(16, 9.6))
+    ax.set(xlim=(0, 160), ylim=(0, 96))
     ax.axis("off")
-    title = {"fontsize": 9.5, "fontweight": "bold", "ha": "left"}
+    blue, green, ink = "#e4eff8", "#edf3ed", "#243447"
 
-    # (a) skill-call frame
-    ax.text(0.5, 49.5, "(a) Skill-call frame", **title)
-    ax.add_patch(
-        Polygon(
-            [(1, 18), (15, 18), (15, 24), (28, 24), (28, 16.5), (1, 16.5)],
-            fc="#e6e6e6",
-            ec="#777777",
-            lw=0.8,
-        )
+    def text(x, y, label, size=10, **kw):
+        ax.text(x, y, label, fontsize=size, color=ink, va="center", **kw)
+
+    def box(x, y, w, h, label, color="white"):
+        _box(ax, x, y, w, h, label, fc=color, ec="#82909e", fs=10, r=0.7)
+
+    def arrow(a, b, **kw):
+        _arrow(ax, a, b, color=ink, lw=1.15, **kw)
+
+    text(2, 93, "(a) State prediction: one step, then repeat", 14, fontweight="bold")
+    text(2, 89, "B: batch   N: spheres   M: course faces   w: token width   L: blocks")
+    box(
+        2,
+        67,
+        21,
+        17,
+        "Raw state $x_t$\n$B \\times N \\times 9$\nposition, velocity,\nangular velocity",
+        blue,
     )
-    spheres = {
-        "A": (5, 19.6, "roll"),
-        "B": (13.3, 19.6, "climb"),
-        "C": (10.6, 22.2, "climb"),
-        "D": (21, 25.6, "pull"),
-        "E": (25.5, 25.6, "pull"),
-    }
-    ax.plot([13.3, 10.6], [19.6, 22.2], color="#222222", lw=1.6, zorder=3)
-    ax.plot([21, 25.5], [25.6, 25.6], color="#222222", lw=1.6, zorder=3)
-    for k, (x, y, s) in spheres.items():
-        ax.add_patch(Circle((x, y), 1.6, fc=skill_c[s], ec="#222222", lw=0.7, zorder=4))
-        ax.text(x, y, k, ha="center", va="center", fontsize=6.5, color="white", zorder=5)
-    ox, oy = 15, 24
-    ax.plot(ox, oy, "k*", ms=7, zorder=6)
-    _arrow(ax, (ox, oy), (ox + 4, oy), color="black")
-    _arrow(ax, (ox, oy), (ox, oy + 4), color="black")
-    ax.text(ox + 4.3, oy - 0.3, "x'", fontsize=7)
-    ax.text(ox - 1.6, oy + 4, "z'", fontsize=7)
-    ax.text(ox - 0.8, oy + 0.9, "$o_c$", fontsize=8, ha="right")
-    _arrow(ax, (ox, oy), (12.1, 22.6), color="#c0392b", lw=1.2)
-    ax.text(5.5, 25.8, "$p_C - o_c$", fontsize=8, color="#c0392b")
-    ax.text(
-        14,
-        12.2,
-        "climb call c: origin $o_c$ at the step edge, rise 0.15 m",
-        fontsize=7,
+    box(
+        28,
+        67,
+        31,
+        17,
+        "State preprocessing\nworld / id: $x_t$\nframe / modular: "
+        "$[p-o_c,v,\\omega]$\nthen $(\\cdot-\\mu_x)/\\sigma_x$",
+        blue,
+    )
+    box(
+        64,
+        67,
+        27,
+        17,
+        "Sphere tokens\nconcat state + action (4)\n+ rise (1) if framed"
+        "\nLinear $d_{in}\\to w$; $B\\times N\\times w$",
+        blue,
+    )
+    box(
+        96,
+        67,
+        26,
+        17,
+        "SetNet\n+ category embedding*\nappend face tokens*\n$L$ pre-LN blocks → head",
+        green,
+    )
+    box(
+        127,
+        67,
+        31,
+        17,
+        "Next raw state\n$d$: head output (9 / "
+        "sphere)\n$\\hat{x}_{t+1}=x_t+\\sigma_\\Delta d+\\mu_\\Delta$\n$B \\times N "
+        "\\times 9$",
+        blue,
+    )
+    for x1, x2 in [(23, 28), (59, 64), (91, 96), (122, 127)]:
+        arrow((x1, 75.5), (x2, 75.5))
+    text(28, 63.5, "Translation only; velocities and axes stay world-aligned. Idle: $o_c=p$.")
+    text(104, 63.5, "* Inputs / routing: panel (c).")
+    arrow((143, 67), (143, 58), style="-", ls="--")
+    arrow((143, 58), (12, 58), style="-", ls="--")
+    arrow((12, 58), (12, 67), ls="--")
+    text(
+        80,
+        55,
+        "State-autoregressive unroll: predicted state fed back; recorded actions, links "
+        "and call context supplied at each step.",
         ha="center",
     )
-    ax.text(
-        14,
-        9.4,
-        "inputs of sphere $i$ relative to the call\n"
-        "it executes (idle: its own position);\nlinks (black) bias the attention",
-        fontsize=7,
+    text(
+        80,
+        51.5,
+        "Training: 8-step loss, state error scaled by $\\sigma_\\Delta$. Evaluation: "
+        "position RMSE at 30 steps. No topology or call prediction.",
         ha="center",
-        va="top",
     )
-    for j, (s, c) in enumerate(skill_c.items()):
-        ax.add_patch(Circle((3 + 7 * j, 34), 1.1, fc=c, ec="#222222", lw=0.6))
-        ax.text(4.5 + 7 * j, 34, s, fontsize=7, va="center")
-    ax.text(0.8, 37.5, "skill executed by each sphere", fontsize=7)
 
-    # (b) one prediction step
-    ax.text(31, 49.5, "(b) One step of the swarm world model (frame, modular)", **title)
-    _box(ax, 30.5, 0.3, 72, 47.2, fc="none", ec="#bbbbbb", lw=0.6, ls="--", r=1.2)
-    rows = [("1", 37.0), ("2", 31.5), ("N", 21.5)]
-    for lab, y in rows:
-        _box(ax, 33, y, 7, 3.2, "$x_i - o_{c(i)}$", fc=c_state, fs=6.5, r=0.3)
-        _box(ax, 40, y, 4, 3.2, "$a_i$", fc=c_act, fs=6.5, r=0.3)
-        _box(ax, 44, y, 2, 3.2, "$r$", fc=c_rise, fs=6.5, r=0.3)
-        ax.text(32.3, y + 1.6, lab, fontsize=7, ha="right", va="center")
-        _arrow(ax, (46.2, y + 1.6), (48.3, y + 1.6))
-    ax.text(39.5, 27.3, "⋮", fontsize=11, ha="center", va="center")
-    ax.text(36.5, 41.2, "9", fontsize=6.5, ha="center")
-    ax.text(42, 41.2, "4", fontsize=6.5, ha="center")
-    ax.text(45, 41.2, "1", fontsize=6.5, ha="center")
-    ax.text(39.5, 44, "sphere tokens (14-D)", fontsize=7.5, ha="center")
-    ax.text(
-        33,
-        17.6,
-        "state: pos, vel, ang_vel (normalised)\naction: fx, fy, lift, attach\n"
-        "r: rise of the call's step",
-        fontsize=6.5,
-        va="top",
-    )
-    _box(ax, 33, 6, 13, 3.4, "skill, role of $c(i)$", fc=c_emb, fs=6.5, r=0.3)
-    _box(ax, 48.5, 19, 3.4, 23, "Linear 14→w", fc="white", fs=7, rot=90)
-    _box(ax, 48.5, 6, 3.4, 3.4, "Emb", fc=c_emb, fs=6.5)
-    _arrow(ax, (46.2, 7.7), (48.3, 7.7))
-    _add(ax, 55, 30.5)
-    _arrow(ax, (52.1, 30.5), (53.9, 30.5))
-    _arrow(ax, (51.9, 7.7), (55, 7.7), style="-")
-    _arrow(ax, (55, 7.7), (55, 29.4))
-    _arrow(ax, (56.1, 30.5), (58.4, 30.5))
-    ax.text(55.6, 14, "8 categories", fontsize=6, rotation=90, va="bottom")
+    text(2, 46, "(b) Inside SetNet: attention over objects, not time", 13, fontweight="bold")
+    box(2, 14, 77, 28, "", "#f8fafb")
+    text(4, 39, "$L \\times$ pre-LN residual block", 11, fontweight="bold")
+    text(4, 28, "$h$")
+    box(9, 24, 10, 8, "LN")
+    box(23, 24, 18, 8, "Multi-head\nattention", green)
+    _add(ax, 45, 28, 1.4)
+    box(50, 24, 9, 8, "LN")
+    box(63, 24, 10, 8, "MLP", green)
+    _add(ax, 76, 28, 1.4)
+    for x1, x2 in [(6, 9), (19, 23), (41, 43.6), (46.4, 50), (59, 63), (73, 74.6)]:
+        arrow((x1, 28), (x2, 28))
+    for x1, x2, y in [(7, 45, 35), (48, 76, 18)]:
+        arrow((x1, 28), (x1, y), style="-")
+        arrow((x1, y), (x2, y), style="-")
+        arrow((x2, y), (x2, 28 + (1.4 if y > 28 else -1.4)))
+    text(4, 11, "MLP: Linear $w$ → $4w$ → GELU → Linear $4w$ → $w$")
+    text(4, 7, "After $L$ blocks: Linear $w$ → 9, sphere tokens only; no final LN.")
+    text(4, 3, "Attention logits: $QK^T/\\sqrt{d_h}+\\alpha_{l,h}\\ell_{ij}+A_{ij}$", 11)
+    text(24, 20, "bias + mask", 9, ha="center")
+    arrow((29, 21.5), (29, 24))
 
-    # transformer block
-    _box(ax, 58.5, 17, 26, 23, fc="#f7f7f7", ec="#555555", lw=0.8, r=1.0)
-    ax.text(84.9, 38.3, "L $\\times$", fontsize=9, fontweight="bold")
-    ax.text(71.5, 15.6, "pre-LN transformer block", fontsize=7.5, ha="center", va="top")
-    blocks = [
-        (59.5, 3, "LayerNorm", "white", 90),
-        (63, 5.6, "Multi-\nhead\natten-\ntion", "#fbe5d6", 0),
-        (72, 3, "LayerNorm", "white", 90),
-        (75.5, 5, "MLP\n4w\nGELU", "#dae8fc", 0),
+    text(84, 46, "(c) Four kinds: inputs, attention scope, routing", 13, fontweight="bold")
+    columns = [84, 97, 111, 126, 142]
+    for x, label in zip(
+        columns, ["Kind", "$d_{in}$ / cat.", "Faces", "Sphere scope", "Networks"], strict=True
+    ):
+        text(x + 0.5, 40, label, fontweight="bold")
+    rows = [
+        ("world", "13 / no", "yes", "all", "1 shared"),
+        ("id", "13 / yes", "yes", "all", "1 shared"),
+        ("frame", "14 / yes", "no", "all", "1 shared"),
+        ("modular", "14 / yes", "no", "same call", "4 skill nets"),
     ]
-    for x, w, t, c, rot in blocks:
-        _box(ax, x, 24, w, 13, t, fc=c, fs=6.5, rot=rot)
-    _arrow(ax, (62.5, 30.5), (63, 30.5))
-    _add(ax, 70.3, 30.5, 0.9)
-    _arrow(ax, (68.6, 30.5), (69.4, 30.5))
-    _arrow(ax, (71.2, 30.5), (72, 30.5))
-    _arrow(ax, (75, 30.5), (75.5, 30.5))
-    _add(ax, 82.3, 30.5, 0.9)
-    _arrow(ax, (80.5, 30.5), (81.4, 30.5))
-    # residual paths
-    _arrow(ax, (58.8, 30.5), (58.8, 20), style="-")
-    _arrow(ax, (58.8, 20), (70.3, 20), style="-")
-    _arrow(ax, (70.3, 20), (70.3, 29.6))
-    _arrow(ax, (71.6, 22), (82.3, 22), style="-")
-    _arrow(ax, (71.6, 30.5), (71.6, 22), style="-")
-    _arrow(ax, (82.3, 22), (82.3, 29.6))
-    # attention bias inset
-    import numpy as np
-
-    lk = np.array([[0, 1, 0, 0], [1, 0, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]])
-    ax.imshow(
-        lk,
-        extent=(63.8, 67.8, 41.5, 45.5),
-        cmap="Greys",
-        vmin=0,
-        vmax=1.6,
-        interpolation="nearest",
-        zorder=3,
-    )
-    ax.text(68.4, 44.6, "links $\\ell_{ij}$", fontsize=6.5, va="center")
-    ax.text(
-        68.4,
-        42.4,
-        "bias $w_{l,h}\\,\\ell_{ij}$ (+ mask: same call\nonly, modular)",
-        fontsize=6.2,
-        va="center",
-    )
-    _arrow(ax, (65.8, 41.3), (65.8, 37.2), color="#c0392b")
-    _arrow(ax, (83.2, 30.5), (87, 30.5))
-    # head and update
-    _box(ax, 87.2, 24, 3.2, 13, "Linear w→9", fc="white", fs=7, rot=90)
-    _arrow(ax, (90.4, 30.5), (91.3, 30.5))
-    _box(ax, 91.5, 27.5, 10, 6, "$\\widehat{\\Delta x}_i$ (9)\nde-normalise", fc=c_state, fs=6.8)
-    _arrow(ax, (96.5, 27.3), (96.5, 22.3))
-    _box(ax, 90.5, 16.5, 12, 5.6, "$\\hat x_i^{t+1} = x_i^t + \\Delta x_i$", fc="#fff2cc", fs=7.2)
-    ax.text(
-        96.5, 14.5, "reward, success:\nanalytic from $\\hat x$", fontsize=6.3, ha="center", va="top"
-    )
-    _arrow(ax, (96.5, 4.8), (36.5, 4.8), color="#c0392b", ls="--")
-    _arrow(ax, (96.5, 10.4), (96.5, 4.8), style="-", color="#c0392b", ls="--")
-    _arrow(ax, (36.5, 4.8), (36.5, 5.8), color="#c0392b", ls="--")
-    ax.text(
-        66,
-        3.9,
-        "open-loop unroll: $\\hat{x}^{t+1}$ fed back; actions, links and calls given "
-        "(loss over 8 steps, evaluation at 30)",
-        fontsize=6.5,
+    for j, row in enumerate(rows):
+        y = 34 - 6 * j
+        ax.plot([84, 158], [y + 3, y + 3], color="#d4dbe1", lw=0.7)
+        for k, (x, label) in enumerate(zip(columns, row, strict=True)):
+            text(x + 0.5, y, label, **({"fontweight": "bold"} if k == 0 else {}))
+        ax.plot([83, 83], [y - 2, y + 2], color=COLORS[row[0]], lw=3)
+    text(84, 10, "Category: 8 skill-role embeddings. Routing: cat // 2 selects", 9.5)
+    text(84, 6.5, "idle / roll / climb / pull output per sphere; no learned gate.", 9.5)
+    text(84, 3, "Modular: $A_{ij}=0$ for same call, $-10^9$ otherwise; idle groups unique.", 9.5)
+    fig.text(
+        0.5,
+        0.005,
+        "Links: learned scalar per layer/head, initially zero. Faces: Linear 3→w, zero "
+        "link bias to/from faces, padded face keys masked. Normalization: fitted state / "
+        "delta statistics.",
         ha="center",
-        va="top",
-        color="#c0392b",
+        va="bottom",
+        fontsize=9,
+        color="#546477",
     )
+    fig.subplots_adjust(left=0.01, right=0.99, bottom=0.045, top=0.99)
+    fig.savefig(IMG / "modular_arch.png", dpi=200, bbox_inches="tight", pad_inches=0.12)
+    plt.close(fig)
 
-    # (c) the four kinds
-    ax.text(105, 49.5, "(c) Four model kinds", **title)
-    kinds = [
-        ("world", "$[x_i, a_i]$ world frame\n+ course-face tokens", "1 net"),
-        ("id", "world + Emb(skill, role)", "1 net"),
-        ("frame", "$[x_i - o_{c(i)}, a_i, r]$\n+ Emb(skill, role)", "1 net"),
-        ("modular", "frame inputs, routed by skill", None),
-    ]
-    for j, (k, inp, nets) in enumerate(kinds):
-        y = 40 - 10.5 * j
-        _box(ax, 105, y, 28, 8.5, fc="white", ec=COLORS[k], lw=1.4, r=0.8)
-        ax.text(106, y + 7, k, fontsize=8, fontweight="bold", color=COLORS[k], va="center")
-        ax.text(106, y + 3.4, inp, fontsize=6.5, va="center")
-        if nets:
-            _box(ax, 125.5, y + 1.5, 6.5, 5.5, nets, fc="#f7f7f7", fs=6.3)
-        else:
-            for m, (s, c) in enumerate(skill_c.items()):
-                _box(
-                    ax,
-                    122.5 + 2.6 * m,
-                    y + 1.2,
-                    2.2,
-                    5.4,
-                    s,
-                    fc=c,
-                    ec="#333333",
-                    fs=5.2,
-                    rot=90,
-                    r=0.3,
-                )
-    ax.text(
-        105,
-        5.6,
-        "Same data, same unroll loss; model size\nvaries by width $\\times$ layers "
-        "(0.4 M to 19 M).\nmodular: one expert per skill, each\nsphere predicted by the "
-        "expert of its call.",
-        fontsize=6.5,
-        va="top",
-    )
-    fig.savefig(IMG / "modular_arch.png", dpi=200, bbox_inches="tight", pad_inches=0.05)
+
+def mosaic():
+    """MOSAIC against the expert and the learned baselines (Appendix A.10-A.11 runs)."""
+
+    def stats(r, k):
+        ok, st = r[k]["success"], r[k]["steps"]
+        return int(ok.sum()), float(st[ok].mean()) if ok.any() else np.nan
+
+    s4 = pickle.load(open(SKILLS / "s4_50.pkl", "rb"))
+    conds = {"base": "nominal", "noise0.005": "noise\n5 mm", "fric0.5": "friction\nx0.5",
+             "fric1.5": "friction\nx1.5", "mass0.7": "mass\nx0.7", "mass1.5": "mass\nx1.5",
+             "rise0.10": "rise\n0.10 m", "n5": "N = 5", "n6": "N = 6"}  # fmt: skip
+    adapt = {c: pickle.load(open(SKILLS / f"adapt_{c}_shaped.pkl", "rb")) for c in conds}
+    arms = {"expert": ("scripted expert (sequential)", "#222222"),
+            "script": ("scheduler + scripted skills", "#9e9e9e"),
+            "mosaic": ("MOSAIC (learned skills)", MOSAIC)}  # fmt: skip
+    fig = plt.figure(figsize=(13, 3.9))
+    gs = fig.add_gridspec(1, 3, width_ratios=[1, 1.7, 1.25], wspace=0.32)
+
+    # (a) test seeds: success against speed
+    ax = fig.add_subplot(gs[0])
+    pts = {"expert": ("expert", "#222222"), "dagger": ("DAgger\n(whole task)", COLORS["world"]),
+           "bc512": ("BC skills,\nno chaining", "#c9a0a0"),
+           "wam": ("WAM skills,\nno chaining", "#e08e8e"),
+           "script": ("scripted\nskills", "#9e9e9e"),
+           "chain_wam_mixe": ("MOSAIC", MOSAIC)}  # fmt: skip
+    for k, (lab, c) in pts.items():
+        n, st = stats(s4, k)
+        big = k == "chain_wam_mixe"
+        ax.scatter(st, n, s=150 if big else 55, color=c, zorder=3, edgecolor="white",
+                   marker="*" if big else "o")  # fmt: skip
+        dx, dy = {"expert": (-12, 1.5), "dagger": (-22, -5), "script": (8, -4.5),
+                  "bc512": (6, -1), "wam": (6, -1), "chain_wam_mixe": (-38, 2)}[k]  # fmt: skip
+        ax.annotate(lab, (st, n), (st + dx, n + dy), fontsize=7, color=c,
+                    fontweight="bold" if big else "normal")  # fmt: skip
+    ax.set_xlim(100, 290)
+    ax.set_ylim(22, 55)
+    ax.set_xlabel("mean steps on success (lower is faster)")
+    ax.set_ylabel("successes / 50")
+    ax.set_title("(a) test seeds, one step, N = 4", fontsize=9)
+
+    # (b) success on fresh courses under perturbations
+    ax = fig.add_subplot(gs[1])
+    x = np.arange(len(conds))
+    for j, (k, (lab, c)) in enumerate(arms.items()):
+        v = [stats(adapt[cd], k)[0] for cd in conds]
+        ax.bar(x + (j - 1) * 0.27, v, 0.27, color=c, label=lab)
+    ax.set_xticks(x, list(conds.values()), fontsize=7)
+    ax.set_ylim(0, 56)
+    ax.set_ylabel("successes / 50")
+    ax.legend(fontsize=7.5, frameon=False, ncol=3, loc="upper center", bbox_to_anchor=(0.5, -0.17))
+    ax.set_title("(b) unseen random 1-3 step courses, zero-shot", fontsize=9)
+
+    # (c) speed relative to the expert, courses both solve
+    ax = fig.add_subplot(gs[2])
+    for j, k in enumerate(("script", "mosaic")):
+        ratios = []
+        for cd in conds:
+            r = adapt[cd]
+            both = r[k]["success"] & r["expert"]["success"]
+            ratios.append((r[k]["steps"][both] / r["expert"]["steps"][both]).mean())
+        ax.barh(x + (j - 0.5) * 0.38, ratios, 0.38, color=arms[k][1], label=arms[k][0])
+    ax.axvline(1, color="#222222", lw=1, ls="--")
+    ax.text(0.98, len(conds) - 0.2, "expert", fontsize=7, ha="right")
+    ax.set_yticks(x, [c.replace("\n", " ") for c in conds.values()], fontsize=7)
+    ax.invert_yaxis()
+    ax.set_xlim(0, 1.15)
+    ax.set_xlabel("steps / expert steps (lower is faster)")
+    ax.set_title("(c) speed on courses both solve", fontsize=9)
+    title = "MOSAIC against the scripted expert and learned baselines (50 paired seeds per bar)"
+    fig.suptitle(title, y=1.04)
+    fig.savefig(IMG / "mosaic_benchmark.png", dpi=150, bbox_inches="tight")
 
 
 if __name__ == "__main__":
-    for name in sys.argv[1:] or ["scene", "arch", "e1", "e2", "e3", "e4", "gifs"]:
+    for name in sys.argv[1:] or ["scene", "arch", "mosaic", "e1", "e2", "e3", "e4", "gifs"]:
         globals()[name]()
         print(f"done {name}")

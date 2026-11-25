@@ -10,6 +10,9 @@ All notable changes to this project are documented here. The format follows
 
 - README reorganised around the paper: title, links, teaser, TL;DR, abstract, key results
   (E1-E4, MOSAIC), method, reproduction commands and BibTeX citation; benchmark details folded.
+- Figures: paper-style architecture figure of the swarm world models (`modular_figures.py arch`),
+  MOSAIC benchmark figure against the expert and learned baselines (`mosaic`), and MOSAIC and the
+  per-skill world model highlighted in the E1-E4 figures.
 
 ## [1.1.0] - 2026-11-24
 

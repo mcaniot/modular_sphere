@@ -45,10 +45,7 @@ two negative results.
   <img src="docs/images/modular_arch.png" width="100%" alt="Architecture of the swarm world models: skill-call frame, set transformer with link-biased attention, four model kinds">
 </p>
 
-*(a) Each sphere's inputs are expressed in the frame of the skill call it executes. (b) One step of
-the swarm world model: sphere tokens (state, action, rise) plus a skill-role embedding go through
-L pre-LN transformer blocks whose attention is biased by the links; a linear head predicts each
-sphere's state change, unrolled open loop. (c) The four kinds compared on the same data.*
+*(a) State-autoregressive prediction with fitted state/delta normalization; only positions are translated in the skill-call frame. Recorded actions, links and call context are supplied at every unroll step (8 for training, 30 for evaluation). (b) SetNet's pre-LN residual block: link-biased attention over object tokens and a GELU MLP, followed by a sphere-only linear state-change head. (c) Inputs, attention scope and deterministic routing for the four model kinds; modular uses four separate skill networks, not a learned mixture gate.*
 
 ## Abstract
 
@@ -78,6 +75,18 @@ does not improve success.
    courses zero-shot (§3, §4.4, Appendix A).
 
 ## Results
+
+### MOSAIC against the expert and learned baselines
+
+<p align="center">
+  <img src="docs/images/mosaic_benchmark.png" width="100%" alt="MOSAIC against the scripted expert, DAgger and unchained learned skills: success and speed on test seeds and on unseen perturbed courses">
+</p>
+
+*MOSAIC (red) against the scripted sequential expert (black), the scheduler with scripted skills
+(grey), DAgger on the whole task and learned skills without chaining data. (a) Test seeds: MOSAIC
+solves 50/50 in 142 steps against 248 for the expert. (b) Fresh unseen courses (600000–600049)
+under nine conditions: same success as the expert in seven. (c) Steps relative to the expert on
+the courses both solve: 0.40–0.72. World-model figures below: the per-skill model is green.*
 
 ### E1: the skill-call frame generalises
 
