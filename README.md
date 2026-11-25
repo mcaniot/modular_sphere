@@ -44,15 +44,20 @@ not equivalence or proof that dynamics planning cannot help.
 ## Model overview
 
 <p align="center">
-  <img src="docs/images/modular_arch.png" width="100%" alt="Three-panel world-model overview: conditional state prediction, link-biased object attention, and four model kinds with fixed routing">
+  <img src="docs/images/modular_arch.png" width="100%" alt="SwarmWM architecture: inputs, sphere encoder, stacked per-skill SetNets with link-biased masked attention, linear head and open-loop unroll; attention masks of the shared and per-skill models">
 </p>
 
-*(a) State-autoregressive prediction with fitted state/delta normalization; only positions are
-translated in the skill-call frame. Recorded actions, links and call context are supplied at every
-unroll step (8 for training, 30 for evaluation). (b) SetNet's pre-LN residual block: link-biased
-attention over object tokens and a GELU MLP, followed by a sphere-only linear state-change head. (c)
-Inputs, attention scope and deterministic routing for the four model kinds; modular uses four
-separate skill networks, not a learned mixture gate.*
+*(a) One prediction step: sphere
+tokens (state, executed action and, for framed models, call rise, positions translated to the
+skill-call frame) plus a skill·role embedding feed L = 2 pre-LN blocks (LayerNorm, masked
+attention with a learned per-layer, per-head link bias $w_{\ell h}A_{ij}$, LayerNorm, GELU MLP);
+a sphere-only linear head predicts the normalised 9-D state change. `modular` stacks four such
+SetNets (idle, roll, climb, pull) and each sphere keeps the output of its call's net; `world` and
+`id` add course-face tokens. The predicted state is fed back while recorded actions, links and
+calls are supplied (8 steps for training, 30 for evaluation). (b, c) Attention masks for one
+example (calls pull {s1, s2}, climb {s3}, roll {s4}; links s1–s2–s3–s4): shared models attend over
+all spheres (and faces for `world`/`id`); the per-skill model attends only within a call, so the
+s2–s3 link is masked. A fixed routing, not a learned mixture gate.*
 
 ## Abstract
 

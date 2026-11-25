@@ -395,108 +395,281 @@ def _add(ax, x, y, r=1.0):
     ax.text(x, y, "+", ha="center", va="center", fontsize=8)
 
 
-def arch():
-    """Three aligned views: conditional prediction, object attention, model variants."""
-    fig, axes = plt.subplots(3, 1, figsize=(7.2, 6.6), height_ratios=[1.15, 0.85, 1.25])
-    for ax in axes:
-        ax.set(xlim=(0, 100), ylim=(0, 30))
-        ax.axis("off")
+SKILL_C = {"pull": "#CC79A7", "climb": "#009E73", "roll": "#0072B2", "idle": "#999999"}
+EXAMPLE = ["pull", "pull", "climb", "roll"]  # one pull call {s1, s2}, one climb, one roll
+EX_LINKS = {(0, 1), (1, 2), (2, 3)}
 
-    def box(ax, x, y, w, h, text):
-        _box(ax, x, y, w, h, text, fc="#EDF3F9", ec=SLATE, fs=8, r=0.6)
 
-    ax = axes[0]
-    panel(ax, "a", "Conditional state prediction", grid=False)
-    cards = [
-        (0, 17, "Sphere state\nposition, velocity\nangular velocity"),
-        (21, 20, "Preprocess\ntranslate positions*\nnormalize state"),
-        (45, 20, "Object tokens\nstate + action\n+ call rise*"),
-        (69, 12, "SetNet\npanel (b)"),
-        (85, 15, "Next state\nrescale delta\n+ current state"),
-    ]
-    for x, w, text in cards:
-        box(ax, x, 13, w, 13, text)
-    for a, b in [(17, 21), (41, 45), (65, 69), (81, 85)]:
-        _arrow(ax, (a, 19.5), (b, 19.5), color=SLATE)
-    _arrow(ax, (92, 13), (92, 9), style="-", color=SLATE, ls="--")
-    _arrow(ax, (92, 9), (8, 9), style="-", color=SLATE, ls="--")
-    _arrow(ax, (8, 9), (8, 13), color=SLATE, ls="--")
-    ax.text(
-        50,
-        5,
-        "Feed predicted state back; supply recorded actions, links and call context.",
-        ha="center",
-        fontsize=8,
-    )
-    ax.text(
-        50,
-        0,
-        "* Frame / modular only; axes and velocities remain world-aligned.",
-        ha="center",
-        fontsize=8,
-        color=SLATE,
-    )
-
-    ax = axes[1]
-    panel(ax, "b", "SetNet · attention over objects, not time", grid=False)
-    for x, w, text in [
-        (3, 10, "LN"),
-        (18, 22, "Link-biased\nattention"),
-        (51, 10, "LN"),
-        (66, 15, "GELU MLP"),
-    ]:
-        box(ax, x, 10, w, 12, text)
-    for x in (45, 87):
-        _add(ax, x, 16, 1.5)
-    for a, b in [(0, 3), (13, 18), (40, 43.5), (46.5, 51), (61, 66), (81, 85.5), (88.5, 96)]:
-        _arrow(ax, (a, 16), (b, 16), color=SLATE)
-    for x1, x2, y in [(1, 45, 26), (48, 87, 5)]:
-        _arrow(ax, (x1, 16), (x1, y), style="-", color=SLATE)
-        _arrow(ax, (x1, y), (x2, y), style="-", color=SLATE)
-        _arrow(ax, (x2, y), (x2, 17.5 if y > 16 else 14.5), color=SLATE)
-    ax.text(97, 16, "$h'$", va="center", fontsize=9)
-    ax.text(
-        50,
-        0,
-        "Repeat L pre-LN blocks → sphere-only linear head (9 state deltas per sphere).",
-        ha="center",
-        fontsize=8,
-    )
-
-    ax = axes[2]
-    panel(ax, "c", "Model variants · fixed routing, no learned gate", grid=False)
-    columns = [1, 20, 42, 56, 75]
-    for x, title in zip(
-        columns, ["Model", "Token input", "Faces", "Attention", "Networks"], strict=True
-    ):
-        ax.text(x, 26, title, fontsize=8, fontweight="bold")
-    rows = [
-        ("world", "13", "yes", "all spheres", "1 shared"),
-        ("id", "13 + category", "yes", "all spheres", "1 shared"),
-        ("frame", "14 + category", "no", "all spheres", "1 shared"),
-        ("modular", "14 + category", "no", "same call", "4 skill networks"),
-    ]
+def _mask(ax, letter, title, names, allow, link, rowc, groups=None):
+    """Attention matrix of one layer: queries in rows, keys / values in columns."""
     from matplotlib.patches import Rectangle
 
-    for j, row in enumerate(rows):
-        y = 21 - j * 5.5
-        if row[0] == "modular":
-            ax.add_patch(Rectangle((0, y - 1.8), 100, 5, facecolor="#FFF2E8", edgecolor="none"))
-        ax.plot([0, 100], [y + 3.3, y + 3.3], color=GRID, lw=0.6)
-        for x, text in zip(columns, row, strict=True):
+    n = len(names)
+    for i in range(n):
+        for j in range(n):
+            x, y = j, n - 1 - i
+            if allow[i][j]:
+                ax.add_patch(
+                    Rectangle(
+                        (x + 0.08, y + 0.08),
+                        0.84,
+                        0.84,
+                        fc=rowc[i],
+                        ec=INK if link[i][j] else rowc[i],
+                        lw=0.5,
+                        hatch="////" if link[i][j] else None,
+                        alpha=0.85,
+                    )
+                )
+            else:
+                ax.add_patch(Rectangle((x + 0.08, y + 0.08), 0.84, 0.84, fc="white", ec=GRID))
+        ax.text(i + 0.5, n + 0.15, names[i], ha="center", va="bottom", fontsize=8)
+        ax.text(-0.15, n - 0.5 - i, names[i], ha="right", va="center", fontsize=8)
+    ax.text(n / 2, n + 0.95, "K / V", ha="center", fontsize=8, fontweight="bold")
+    ax.text(-1.55, n / 2, "Q", va="center", fontsize=8, fontweight="bold")
+    if groups:
+        for k, (g0, g1, text, c) in enumerate(groups):
+            ax.plot([g0 + 0.1, g1 - 0.1], [-0.25, -0.25], color=c, lw=1.6)
             ax.text(
-                x,
-                y,
+                (g0 + g1) / 2,
+                -0.45 - 0.5 * (k % 2 and g1 - g0 == 1),
                 text,
-                fontsize=8,
-                color=MOSAIC if row[0] == "modular" else INK,
-                fontweight="bold" if row[0] == "modular" else "normal",
+                ha="center",
+                va="top",
+                fontsize=7,
+                color=c,
             )
-    fig.subplots_adjust(left=0.025, right=0.975, top=0.95, bottom=0.09, hspace=0.48)
+            if g0 > 0:
+                ax.plot([g0, g0], [-0.1, n + 0.1], color=SLATE, lw=0.6, ls=":")
+                ax.plot([-0.1, n + 0.1], [n - g0, n - g0], color=SLATE, lw=0.6, ls=":")
+    ax.set(xlim=(-1.8, 6.3), ylim=(n - 7.3, n + 1.4), aspect="equal")
+    ax.set_anchor("N")
+    ax.axis("off")
+    ax.set_title(f"({letter})  {title}", pad=2, fontsize=9)
+
+
+def _trap(ax, x, y, w, h, text, fc, ls="-"):
+    from matplotlib.patches import Polygon
+
+    d = 0.12 * w
+    ax.add_patch(
+        Polygon([(x, y), (x + w, y), (x + w - d, y + h), (x + d, y + h)], fc=fc, ec=fc, ls=ls)
+    )
+    ax.text(x + w / 2, y + h / 2, text, ha="center", va="center", fontsize=7.5, color="white")
+
+
+def _tokens(ax, xs, y, colors, hatch=None, s=4.2):
+    from matplotlib.patches import Rectangle
+
+    for x, c in zip(xs, colors, strict=True):
+        ax.add_patch(
+            Rectangle(
+                (x, y),
+                s,
+                s,
+                fc=c,
+                ec="white" if not hatch else c,
+                lw=0.6,
+                hatch=hatch,
+                alpha=0.9 if not hatch else 0.35,
+            )
+        )
+
+
+def arch():
+    """SwarmWM in the style of transformer world-model papers: (a) one prediction step,
+    (b, c) the attention mask of the shared and the per-skill (modular) models."""
+    from matplotlib.patches import Rectangle
+
+    fig = plt.figure(figsize=(7.2, 4.9))
+    gs = fig.add_gridspec(2, 2, width_ratios=[1.45, 1], hspace=0.12, wspace=0.02)
+    ax = fig.add_subplot(gs[:, 0])
+    ax.set(xlim=(0, 100), ylim=(0, 100))
+    ax.axis("off")
+    ax.set_title("(a)  SwarmWM · one prediction step", pad=4, fontsize=9.5)
+    skc = [SKILL_C[s] for s in EXAMPLE]
+    dark, pale = "#34495E", "#EDF3F9"
+    arr = {"color": SLATE, "lw": 1.0}
+
+    # Inputs.
+    fy = 9.5
+    ax.plot([2, 11, 11, 20], [fy, fy, fy + 4, fy + 4], color=INK, lw=0.9)
+    pts = [(5, fy + 1.1), (8.5, fy + 1.1), (13.5, fy + 5.1), (17.5, fy + 5.1)]
+    for i, j in EX_LINKS:
+        ax.plot(*zip(pts[i], pts[j], strict=True), color=SLATE, lw=0.8)
+    for p, c in zip(pts, skc, strict=True):
+        ax.plot(*p, "o", ms=5.5, color=c, mec="white", mew=0.5)
+    for k in range(4):
+        x = 25 + 3.2 * k
+        ax.plot(x, fy + 2.5, "o", ms=3.5, color="#B8C2CF")
+        ax.annotate(
+            "",
+            (x + 1.6 * (-1) ** k, fy + 5.5),
+            (x, fy + 2.5),
+            arrowprops={"arrowstyle": "-|>", "color": INK, "lw": 0.7, "mutation_scale": 6},
+        )
+    _box(ax, 39, fy - 0.8, 15, 8.4, fc="white", ec=SLATE, r=0.6)
+    for k, (t, c) in enumerate(
+        [
+            ("pull {s1, s2}", SKILL_C["pull"]),
+            ("climb {s3}", SKILL_C["climb"]),
+            ("roll {s4}", SKILL_C["roll"]),
+        ]
+    ):
+        ax.text(46.5, fy + 5.8 - 2.6 * k, t, ha="center", va="center", fontsize=6.5, color=c)
+    _box(ax, 57, fy - 0.8, 13, 8.4, fc="white", ec=SLATE, ls="--", r=0.6)
+    ax.plot([58.5, 63, 63, 68.5], [fy + 0.5, fy + 0.5, fy + 5, fy + 5], color=INK, lw=0.8)
+    ax.plot(63, fy + 2.7, "D", ms=3.5, color=INK)
+    for i in range(4):
+        for j in range(4):
+            link = (min(i, j), max(i, j)) in EX_LINKS and i != j
+            ax.add_patch(
+                Rectangle(
+                    (80 + 2 * j, fy + 5.5 - 2 * i),
+                    1.8,
+                    1.8,
+                    ec=INK if link else GRID,
+                    fc="#DDE3EA" if link else "white",
+                    hatch="////" if link else None,
+                    lw=0.4,
+                )
+            )
+    for x, t in [
+        (11, "State $x_t$\nN $\\times$ 9"),
+        (30, "Action $a_t$\nN $\\times$ 4"),
+        (46.5, "Skill calls\nskill · role"),
+        (63.5, "Faces*\nworld, id"),
+        (84, "Links $A_t$\nN $\\times$ N"),
+    ]:
+        ax.text(x, fy - 1.8, t, ha="center", va="top", fontsize=7.5)
+
+    # Encoders and tokens.
+    for x in (11, 30, 46.5):
+        _arrow(ax, (x, fy + 8.2), (x, 22), **arr)
+    _trap(ax, 3, 22, 51, 8, "Sphere encoder\nlinear + skill·role emb.*", dark)
+    ax.text(12.5, fy + 9.8, "frame*,\nnorm.", fontsize=6.5, color=SLATE, va="center")
+    _arrow(ax, (63.5, fy + 8.2), (63.5, 22), **arr)
+    _trap(ax, 55.5, 22, 16, 8, "Face\nenc.*", "#8D99A8")
+    _arrow(ax, (28.5, 30), (28.5, 33), **arr)
+    _arrow(ax, (63.5, 30), (63.5, 33), **arr)
+    _tokens(ax, [18.5, 23.5, 28.5, 33.5], 33, skc)
+    _tokens(ax, [59, 64], 33, ["#8D99A8"] * 2, hatch="////")
+    ax.text(16.5, 35.1, "$h_{1..4}$", ha="right", va="center", fontsize=8)
+    ax.text(69.5, 35.1, "$f_{1,2}$", ha="left", va="center", fontsize=8)
+
+    # Transformer stack: one SetNet per skill (modular), L pre-LN blocks.
+    _box(ax, 4, 41, 74, 43, fc="none", ec=SLATE, ls="--", r=1.5)
+    ax.text(77, 85, "L $\\times$", ha="right", fontsize=9, style="italic", color=SLATE)
+    for k in (3, 2, 1):
+        _box(ax, 10 + 1.4 * k, 44 + 1.2 * k, 56, 35, fc="white", ec=MOSAIC, lw=0.7, r=1.2)
+    _box(ax, 10, 44, 56, 35, fc="white", ec=MOSAIC, lw=1.4, r=1.2)
+    layers = [
+        (51, "LayerNorm", pale, INK),
+        (58, "Masked attention + link bias", dark, "white"),
+        (65, "LayerNorm", pale, INK),
+        (72, "FFN (GELU MLP)", pale, INK),
+    ]
+    for y, t, fc, tc in layers:
+        _box(ax, 14, y, 48, 5, fc=fc, ec=SLATE, lw=0.6, r=0.8)
+        ax.text(38, y + 2.5, t, ha="center", va="center", fontsize=7.5, color=tc)
+    ax.text(
+        38,
+        46.3,
+        "SetNet $\\times$ 4 (one per skill)",
+        ha="center",
+        va="center",
+        fontsize=8,
+        fontweight="bold",
+        color=MOSAIC,
+    )
+    _arrow(ax, (38, 37.2), (38, 44), **arr)
+    _arrow(ax, (84, fy + 8.2), (84, 60.5), style="-", **arr)
+    _arrow(ax, (84, 60.5), (62, 60.5), **arr)
+    ax.text(
+        85.5,
+        40,
+        "bias $w_{\\ell h}A_{ij}$\n+ call-group\nmask*\n(b, c)",
+        fontsize=7.5,
+        va="center",
+        color=INK,
+    )
+
+    # Head and unrolled output.
+    _arrow(ax, (38, 79), (38, 88), **arr)
+    _tokens(ax, [28.5, 33.5, 38.5, 43.5], 88, skc)
+    ax.text(50, 90.1, "linear head: $\\hat\\Delta_i \\in \\mathbb{R}^9$", va="center", fontsize=8)
+    ax.text(
+        28,
+        90.1,
+        "$\\hat x_{t+1}=x_t+\\sigma\\hat\\Delta+\\mu$",
+        ha="right",
+        va="center",
+        fontsize=8,
+    )
+    _arrow(ax, (1.5, 90.1), (1.5, fy + 2), style="-", color=MOSAIC, lw=1.0, ls="--")
+    _arrow(ax, (1.5, fy + 2), (3.5, fy + 2), color=MOSAIC, lw=1.0, ls="--")
+    ax.text(
+        0.2,
+        62,
+        "open-loop unroll: $\\hat x_{t+1}$ replaces $x_t$",
+        rotation=90,
+        va="center",
+        ha="right",
+        fontsize=7.5,
+        color=MOSAIC,
+    )
+
+    n = len(EXAMPLE)
+    names = [f"s{i + 1}" for i in range(n)]
+    lk = [
+        [(min(i, j), max(i, j)) in EX_LINKS and i != j for j in range(n + 2)] for i in range(n + 2)
+    ]
+    _mask(
+        fig.add_subplot(gs[0, 1]),
+        "b",
+        "Shared model (world, id, frame)",
+        [*names, "f1", "f2"],
+        [[True] * (n + 2)] * (n + 2),
+        lk,
+        ["#9FB0C4"] * n + ["#C9D1DB"] * 2,
+        [(0, n, "spheres", SLATE), (n, n + 2, "faces*", SLATE)],
+    )
+    group = [0, 0, 1, 2]
+    axc = fig.add_subplot(gs[1, 1])
+    _mask(
+        axc,
+        "c",
+        "Per-skill model (modular): same call only",
+        names,
+        [[group[i] == group[j] for j in range(n)] for i in range(n)],
+        lk,
+        skc,
+        [
+            (0, 2, "pull", SKILL_C["pull"]),
+            (2, 3, "climb", SKILL_C["climb"]),
+            (3, 4, "roll", SKILL_C["roll"]),
+        ],
+    )
+    from matplotlib.patches import Patch
+
+    axc.legend(
+        handles=[
+            Patch(fc="#9FB0C4", ec="#9FB0C4", label="allowed"),
+            Patch(fc="#9FB0C4", ec=INK, hatch="////", label="+ link bias"),
+            Patch(fc="white", ec=GRID, label="masked"),
+            Patch(fc=MOSAIC, label="skill net (row)"),
+        ],
+        loc="lower center",
+        bbox_to_anchor=(0.62, -0.02),
+        ncol=2,
+        fontsize=7.5,
+        handlelength=1.2,
+    )
     finish(
         fig,
         "modular_arch.png",
-        "Skill networks: idle / roll / climb / pull · state prediction, not topology prediction.",
+        "* variant-specific (paper §4.2). Actions, links and calls are supplied; the "
+        "model predicts states, not topology.",
     )
 
 

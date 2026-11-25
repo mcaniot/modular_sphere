@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Architecture figure redrawn as a transformer world-model diagram (inputs, encoders, stacked
+  per-skill SetNets, link-biased masked attention, unroll) with attention-mask panels.
 - Research-inspired shared figure style, readable panel layouts, redundant MOSAIC highlighting,
   explicit uncertainty labels and synchronized paper/README figure captions.
 - README reorganised around the paper: title, links, teaser, TL;DR, abstract, key results
