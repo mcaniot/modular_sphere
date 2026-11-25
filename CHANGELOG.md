@@ -13,6 +13,9 @@ All notable changes to this project are documented here. The format follows
 - Figures: paper-style architecture figure of the swarm world models (`modular_figures.py arch`),
   MOSAIC benchmark figure against the expert and learned baselines (`mosaic`), and MOSAIC and the
   per-skill world model highlighted in the E1-E4 figures.
+- Paper revised after review: qualified claims (skill-call representation, conditional open-loop
+  prediction, E4 endpoint conditions, non-significance not read as equivalence, frozen-expert
+  retention), E4 seed SDs, numbered tables, definitions and a pinned code commit; README synced.
 
 ## [1.1.0] - 2026-11-24
 

@@ -1,8 +1,8 @@
 <div align="center">
 
-# Skill-frame world models for a swarm of linked spheres
+# Skill-frame world models
 
-### Zero-shot generalisation and skill addition without forgetting
+### Linked-sphere generalisation and frozen-expert skill addition
 
 **Maxime Caniot**
 
@@ -32,12 +32,14 @@ step alone.*
 
 ## TL;DR
 
-Four linked spheres must climb a step that none can climb alone. We compare swarm world models
-trained on the same data and find that **the frame matters, not modularity or size**: expressing
-each sphere's inputs in the frame of the skill call it executes gives **~5× lower 30-step error on
-unseen courses** than world-frame models up to 19 M parameters, and a model with **one network per
-skill adds a new skill with 0.0 cm forgetting** (+6 to +24 cm for shared models). We also report
-two negative results.
+Four linked spheres climb a step that none can climb alone. A **skill-call representation package**
+(position translation plus changed geometry/context) gives **~5× lower conditional 30-step error
+on unseen courses** than the tested world-frame models up to 19 M parameters; translation alone
+is not isolated. Predictions receive recorded future actions, links and call context. **Freezing
+old skill experts and normalisation** gives **0.0 cm forgetting** when adding pull, versus +6 to
++24 cm for shared fine-tuning without replay/regularisation. Mass-endpoint adaptation shows no
+consistent modular advantage, and restricted chunk verification shows no detectable success gain,
+not equivalence or proof that dynamics planning cannot help.
 
 ## Model overview
 
@@ -45,34 +47,43 @@ two negative results.
   <img src="docs/images/modular_arch.png" width="100%" alt="Architecture of the swarm world models: skill-call frame, set transformer with link-biased attention, four model kinds">
 </p>
 
-*(a) State-autoregressive prediction with fitted state/delta normalization; only positions are translated in the skill-call frame. Recorded actions, links and call context are supplied at every unroll step (8 for training, 30 for evaluation). (b) SetNet's pre-LN residual block: link-biased attention over object tokens and a GELU MLP, followed by a sphere-only linear state-change head. (c) Inputs, attention scope and deterministic routing for the four model kinds; modular uses four separate skill networks, not a learned mixture gate.*
+*(a) State-autoregressive prediction with fitted state/delta normalization; only positions are
+translated in the skill-call frame. Recorded actions, links and call context are supplied at every
+unroll step (8 for training, 30 for evaluation). (b) SetNet's pre-LN residual block: link-biased
+attention over object tokens and a GELU MLP, followed by a sphere-only linear state-change head. (c)
+Inputs, attention scope and deterministic routing for the four model kinds; modular uses four
+separate skill networks, not a learned mixture gate.*
 
 ## Abstract
 
-Learned world models for modular robots must predict a swarm whose members link, separate and
-change roles, and must stay accurate on layouts and dynamics never seen in training. We study this on
-a swarm of rolling spheres that link to one another and climb a step that no sphere can climb alone,
-controlled by **MOSAIC**: a scheduler that composes three skills (roll, climb, pull) in parallel over
-subsets of spheres, with one small world model per skill. We compare four swarm world models trained
-on the same data: two world-frame monoliths, a shared model whose inputs are expressed in the frame of
-the skill call each sphere executes, and a modular model with one network per skill. Two claims are
-supported over three training seeds. First, the skill-call frame, not modularity or size, generalises:
-framed models have about five times lower 30-step error on unseen random courses than world-frame
-models of up to 19 M parameters, and at equal size the modular model matches the shared framed model.
-Second, the per-skill model adds the pull skill with 0.0 cm forgetting, against +6 to +24 cm for shared
-models. Two results are negative: modularity does not improve adaptation to a changed mass over a
-large framed model, and verifying MOSAIC's action chunks with a world model, even the MuJoCo oracle,
-does not improve success.
+Learned world models for modular robots must handle changing roles, links and layouts. We study
+a MuJoCo swarm of rolling spheres that link to climb a step that no sphere can climb alone.
+MOSAIC combines a parallel skill scheduler with learned imitation executors; separately, we compare
+four swarm dynamics models on the same data. Their continuous-state predictions are autoregressive,
+conditioned on recorded actions and future link/call context. The skill-call representation
+(position translation plus call-specific geometry/context) gives about five times lower 30-step
+error on unseen courses than world-frame models of up to 19 M parameters. This comparison does not
+isolate translation from the changed geometry inputs. Equal-size modular and shared framed models
+have similar measured errors, without an equivalence test. With task-labelled routing, freezing old
+experts and normalisation gives 0.0 cm forgetting when adding pull, versus +6 to +24 cm for shared
+models fine-tuned without replay or regularisation. Mass-endpoint adaptation within the training
+marginal randomisation range shows no consistent modular advantage over a large framed model.
+Action-chunk verification shows no statistically detectable success improvement under the tested protocol,
+including with MuJoCo dynamics; the oracle verifier degrades success in the heavy-mass condition.
+Most dynamics comparisons use three training seeds; the 19 M-parameter model uses one.
 
 ## Contributions
 
-1. **The skill-call frame generalises, not modularity or size** (§5.1, E1).
-2. **Skills can be added without forgetting** with one network per skill (§5.2, E3).
-3. **Two negative results:** modularity does not help adaptation to a changed mass (§5.3, E4), and
-   verifying action chunks with a world model, even MuJoCo itself, does not improve success (§5.4, E2).
-4. **MOSAIC and its benchmark:** a deterministic MuJoCo benchmark of linked spheres with a scripted
-   expert, a parallel skill scheduler and chained world-action executors that solve fresh random
-   courses zero-shot (§3, §4.4, Appendix A).
+1. **Skill-call representation transfer** with translation/context confounding explicitly retained
+   (§5.1, E1); equal-size framed variants have similar measured errors, without an equivalence test.
+2. **Frozen-expert retention under task labels**, compared with no-replay, unregularised shared
+   fine-tuning, not competitive continual-learning baselines (§5.2, E3).
+3. **Protocol-specific neutral/negative results:** no consistent modular advantage in mass-endpoint
+   adaptation (§5.3, E4); no detectable success improvement from restricted verification, with
+   heavy-mass degradation for the dynamics-oracle verifier (§5.4, E2).
+4. **MOSAIC and its benchmark:** scripted expert, effect-model scheduling and chained imitation
+   executors evaluated on fresh courses (§3, §4.4, Appendix A). Climb ablations do not establish a
+   benefit from world-action ingredients over capacity-matched imitation.
 
 ## Results
 
@@ -84,14 +95,16 @@ does not improve success.
 
 *MOSAIC (red) against the scripted sequential expert (black), the scheduler with scripted skills
 (grey), DAgger on the whole task and learned skills without chaining data. (a) Test seeds: MOSAIC
-solves 50/50 in 142 steps against 248 for the expert. (b) Fresh unseen courses (600000–600049)
-under nine conditions: same success as the expert in seven. (c) Steps relative to the expert on
-the courses both solve: 0.40–0.72. World-model figures below: the per-skill model is green.*
+solves 50/50 in 142 steps against 248 for the expert. (b) Fresh unseen courses (600000–600049) under
+nine conditions: no statistically detectable success deficit in seven (not equivalence). (c) Steps
+relative to the expert on the courses both solve: 0.40–0.72. World-model figures below: the
+per-skill model is green.*
 
-### E1: the skill-call frame generalises
+### E1: the skill-call representation transfers
 
-Open-loop position RMSE at 30 steps (1.5 s), cm, mean ± std over three training seeds
-(`world 512×6`: one seed). Full table in [§5.1](docs/paper/skill_world_models.md#51-q1-does-the-skill-call-frame-generalise-e1).
+Conditional open-loop position RMSE at 30 steps (1.5 s), cm, mean ± std over three training seeds
+(`world 512×6`: one seed). Full table in
+[§5.1](docs/paper/skill_world_models.md#51-q1-does-the-skill-call-representation-transfer-e1).
 
 | Variant | Params | Test | Unseen courses | N = 6 | Mass ×1.5 |
 |---|---|---|---|---|---|
@@ -102,9 +115,15 @@ Open-loop position RMSE at 30 steps (1.5 s), cm, mean ± std over three training
 | world 256×4 | 3.2 M | 2.33 ± 0.23 | 24.9 ± 1.1 | 6.20 ± 0.34 | 3.93 ± 0.04 |
 | world 512×6 | 19 M | 2.17 | 21.8 | 5.06 | 4.13 |
 
-### E3: adding a skill without forgetting
+The representation changes both position translation and geometry/context; an isolated translation
+ablation remains open. Recorded future link/call context is supplied. Equal-size framed errors are
+similar measurements, not proven equivalence; clustered/hierarchical inference remains open.
 
-RMSE change at 30 steps on windows without pull after fine-tuning on pull episodes (cm, three seeds).
+### E3: adding a skill with frozen old experts
+
+RMSE change at 30 steps on windows without pull (cm, three seeds). Only the new modular pull net
+is trained; old experts and normalisation are frozen. Shared models fine-tune without replay or
+regularisation. Rehearsal/regularisation baselines and a non-inferiority test remain open.
 
 | Model | Forgetting, 10 / all pull episodes |
 |---|---|
@@ -117,15 +136,24 @@ RMSE change at 30 steps on windows without pull after fine-tuning on pull episod
   <img src="docs/images/modular_e3.png" width="49%" alt="E3: forgetting when adding the pull skill">
 </p>
 
-### E4 and E2: negative and neutral results
+### E4 and E2: protocol-specific neutral and negative results
 
-- **E4, adaptation to an unknown mass (neutral):** two episodes suffice for every fully fine-tuned
-  framed model; the modular one is not better than a large framed model.
-- **E2, world model as verifier (negative):** verifying MOSAIC's action chunks with any world model,
-  even the MuJoCo oracle, does not improve success (oracle at mass ×1.5: 25/50 against 44/50).
+- **E4, fixed mass-endpoint adaptation:** ×0.7 and ×1.5 are endpoints of the training range
+  [0.7, 1.5], not extrapolation beyond the marginal mass range. Training rise/mass draws are
+  coupled, so joint conditions can still shift. At two episodes, fully fine-tuned framed models
+  reduce error;
+  there is no consistent modular advantage over the large framed model. Retention is measured
+  on the original mixed test distribution, not nominal-only dynamics. The paper reports recomputed
+  seed mean ± population SD; bootstrap intervals condition on those seeds and are exploratory.
+- **E2, restricted verifier:** no statistically detectable success improvement under the tested
+  candidates, horizon and score; this is not equivalence. MuJoCo dynamics retain those restrictions,
+  so the oracle verifier is not a planning upper bound (heavy mass: 25/50 versus MOSAIC 44/50).
+- **Open experiments:** matched-input translation/context ablation; rehearsal/regularisation;
+  practical-margin equivalence tests; episode/training-seed hierarchical inference with
+  multiplicity control; out-of-range mass and autonomous topology prediction.
 
 <p align="center">
-  <img src="docs/images/modular_e4.png" width="60%" alt="E4: adaptation to an unknown mass">
+  <img src="docs/images/modular_e4.png" width="60%" alt="E4: fixed mass-endpoint adaptation">
 </p>
 
 ### MOSAIC (system study, Appendix A)
@@ -135,13 +163,15 @@ RMSE change at 30 steps on windows without pull after fine-tuning on pull episod
 - **Test seeds (one step, N = 4):** 50/50 like the expert, in 147 steps against 248.
 - **Unknown random courses:** 50/50 like the expert, in about half the expert's steps.
 - **Fresh perturbed courses:** with a normalisation floor, training on noisy inputs, and chain data
-  with randomised mass, friction and rise mixed with the nominal data, MOSAIC matches the
-  expert's success in seven of nine conditions, at about half its steps. The conditions are
+  with randomised mass, friction and rise mixed with nominal data, MOSAIC has no statistically
+  detectable success deficit in seven of nine conditions, at about half the expert's steps.
+  The seven conditions include nominal dynamics,
   friction ×0.5 and ×1.5, mass ×1.5, rise 0.10 m and N = 5 or 6.
 - **Energy-shaped pull:** the skills' pull meters the lift by the base's specific energy
   (energy-based swing-up, mass-free) instead of full lift, which dragged light helpers off the
   edge. Retrained on its labels, MOSAIC solves 50/50 with spheres 30 % lighter (2/50 before) and
-  matches the expert in seven of nine conditions on fresh courses, always faster.
+  has no statistically detectable success deficit in seven of nine fresh-course conditions,
+  with faster paired successful episodes; equivalence is not established.
 - **Open limits:** under 5 mm of sensor noise MOSAIC solves 42/50 and with spheres 50 % heavier
   44/50, against 50/50 for the expert.
 
@@ -196,9 +226,11 @@ while env.agents:
 
 ## Reproducing the paper
 
-Paper software versions and hardware: [Appendix C](docs/paper/skill_world_models.md#appendix-c-reproducibility).
-Scripts live in [`docs/paper/experiments/`](docs/paper/experiments/); some paths inside are still
-absolute to the author's machine.
+Source reference: commit `40fb440d0935d987aa7bfb2c19b89d2c84aa004e`, not mutable `main`; saved-run
+artifact hashes are not supplied. Paper software versions and hardware: [Appendix
+C](docs/paper/skill_world_models.md#appendix-c-reproducibility). Scripts live in
+[`docs/paper/experiments/`](docs/paper/experiments/); some paths inside are still absolute to the
+author's machine.
 
 ```bash
 # E1: datasets (one call per SET listed in modular_e1.py), training of every variant, evaluation
@@ -483,8 +515,8 @@ Detailed architecture: [`docs/architecture.html`](docs/architecture.html).
 
 ```bibtex
 @misc{caniot2026skillframe,
-  title  = {Skill-frame world models for a swarm of linked spheres: zero-shot generalisation
-            and skill addition without forgetting},
+  title  = {Skill-frame world models: linked-sphere generalisation
+            and frozen-expert skill addition},
   author = {Caniot, Maxime},
   year   = {2026},
   note   = {Working paper},
