@@ -44,7 +44,7 @@ not equivalence or proof that dynamics planning cannot help.
 ## Model overview
 
 <p align="center">
-  <img src="docs/images/modular_arch.png" width="100%" alt="Architecture of the swarm world models: skill-call frame, set transformer with link-biased attention, four model kinds">
+  <img src="docs/images/modular_arch.png" width="100%" alt="Three-panel world-model overview: conditional state prediction, link-biased object attention, and four model kinds with fixed routing">
 </p>
 
 *(a) State-autoregressive prediction with fitted state/delta normalization; only positions are
@@ -90,15 +90,15 @@ Most dynamics comparisons use three training seeds; the 19 M-parameter model use
 ### MOSAIC against the expert and learned baselines
 
 <p align="center">
-  <img src="docs/images/mosaic_benchmark.png" width="100%" alt="MOSAIC against the scripted expert, DAgger and unchained learned skills: success and speed on test seeds and on unseen perturbed courses">
+  <img src="docs/images/mosaic_benchmark.png" width="100%" alt="MOSAIC in vermilion: (a) single-step success and speed, (b) paired-course speed relative to the expert, (c) zero-shot course success; point estimates from existing results">
 </p>
 
-*MOSAIC (red) against the scripted sequential expert (black), the scheduler with scripted skills
-(grey), DAgger on the whole task and learned skills without chaining data. (a) Test seeds: MOSAIC
-solves 50/50 in 142 steps against 248 for the expert. (b) Fresh unseen courses (600000–600049) under
-nine conditions: no statistically detectable success deficit in seven (not equivalence). (c) Steps
-relative to the expert on the courses both solve: 0.40–0.72. World-model figures below: the
-per-skill model is green.*
+*MOSAIC (vermilion, hatched) against the scripted sequential expert (black), the scheduler with
+scripted skills (grey), DAgger on the whole task and learned skills without chaining data. (a) Test
+seeds: MOSAIC solves 50/50 in 142 steps against 248 for the expert. (b) Steps relative to the expert
+on the fresh courses both solve: 0.40–0.72. (c) Fresh unseen courses (600000–600049) under nine
+conditions: no statistically detectable success deficit in seven (not equivalence). World-model
+figures below: the per-skill model is vermilion too.*
 
 ### E1: the skill-call representation transfers
 
@@ -132,8 +132,8 @@ regularisation. Rehearsal/regularisation baselines and a non-inferiority test re
 | world 256×4 | +23.9 ± 1.5 / +11.4 ± 1.5 |
 
 <p align="center">
-  <img src="docs/images/modular_e1.png" width="49%" alt="E1: open-loop error against horizon">
-  <img src="docs/images/modular_e3.png" width="49%" alt="E3: forgetting when adding the pull skill">
+  <img src="docs/images/modular_e1.png" width="100%" alt="E1: conditional open-loop error; mean and seed range, proposed per-skill model in vermilion">
+  <img src="docs/images/modular_e3.png" width="100%" alt="E3: adding pull; model colours and phase hatches, mean plus or minus population SD over three seeds">
 </p>
 
 ### E4 and E2: protocol-specific neutral and negative results
@@ -153,7 +153,7 @@ regularisation. Rehearsal/regularisation baselines and a non-inferiority test re
   multiplicity control; out-of-range mass and autonomous topology prediction.
 
 <p align="center">
-  <img src="docs/images/modular_e4.png" width="60%" alt="E4: fixed mass-endpoint adaptation">
+  <img src="docs/images/modular_e4.png" width="100%" alt="E4: fixed mass-endpoint adaptation and mixed-test retention; mean plus or minus population SD over three seeds">
 </p>
 
 ### MOSAIC (system study, Appendix A)

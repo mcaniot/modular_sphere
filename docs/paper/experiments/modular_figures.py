@@ -6,6 +6,8 @@ data/swarm/modular/{e1,e3}.pkl, e2_report.md, e4_*.pkl and, for gifs, the MOSAIC
 data/swarm/skills; writes docs/images/modular_*.png and swarm_{climb,mosaic}.gif.
 """
 
+from __future__ import annotations
+
 import pickle
 import sys
 from pathlib import Path
@@ -19,16 +21,80 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[3]
 OUT = ROOT / "data/swarm/modular"
 IMG = ROOT / "docs/images"
-COLORS = {"modular": "#1b9e77", "frame": "#7570b3", "id": "#e6ab02", "world": "#d95f02"}
-MOSAIC = "#c0392b"  # the MOSAIC system in every figure
+MOSAIC = "#D55E00"  # Reserved for MOSAIC / the proposed per-skill model.
+INK, SLATE, GRID = "#202936", "#718096", "#E5E9EF"
+COLORS = {"modular": MOSAIC, "frame": "#4477AA", "id": "#8877AA", "world": SLATE}
 SKILLS = ROOT / "data/swarm/skills"
-plt.rcParams.update({"font.size": 9, "axes.spines.top": False, "axes.spines.right": False})
+plt.rcParams.update(
+    {
+        "font.family": "DejaVu Sans",
+        "mathtext.fontset": "dejavusans",
+        "font.size": 9,
+        "axes.titlesize": 10,
+        "axes.titleweight": "bold",
+        "axes.titlelocation": "left",
+        "axes.labelsize": 9,
+        "axes.spines.top": False,
+        "axes.spines.right": False,
+        "axes.linewidth": 0.7,
+        "axes.edgecolor": SLATE,
+        "text.color": INK,
+        "axes.labelcolor": INK,
+        "xtick.color": INK,
+        "ytick.color": INK,
+        "xtick.labelsize": 8,
+        "ytick.labelsize": 8,
+        "legend.fontsize": 8,
+        "legend.frameon": False,
+        "savefig.facecolor": "white",
+    }
+)
+
+
+def panel(ax, letter: str, title: str, *, grid: bool = True) -> None:
+    """Common panel heading and unobtrusive reference grid."""
+    ax.set_title(f"({letter})  {title}", pad=10)
+    ax.set_axisbelow(True)
+    if grid:
+        ax.grid(axis="y", color=GRID, linewidth=0.6)
+    ax.tick_params(length=3, width=0.6)
+
+
+def model_style(variant: str) -> dict:
+    """Redundant colour, dash and marker encoding, stable across experiments."""
+    kind = variant.split("_")[0]
+    markers = {"modular": "D", "frame": "o", "id": "^", "world": "s"}
+    ls = "-"
+    if variant.endswith("128x2"):
+        ls = "--"
+    elif variant.endswith("512x6") or variant.endswith("head"):
+        ls = ":"
+    return {
+        "color": COLORS[kind],
+        "linewidth": 2.2 if kind == "modular" else 1.5,
+        "linestyle": ls,
+        "marker": markers[kind],
+        "markersize": 4,
+        "markeredgecolor": "white",
+        "markeredgewidth": 0.5,
+    }
+
+
+def finish(fig, filename: str, note: str = "", *, legend_ax=None, ncol: int = 2) -> None:
+    """Save at publication resolution; reserve whitespace, never cover data."""
+    if legend_ax is not None:
+        handles, labels = legend_ax.get_legend_handles_labels()
+        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 0.035), ncol=ncol)
+    if note:
+        fig.text(0.5, 0.008, note, ha="center", va="bottom", fontsize=8, color=SLATE)
+    fig.savefig(IMG / filename, dpi=250, bbox_inches="tight", pad_inches=0.10)
+    plt.close(fig)
 
 
 def label(v):
     """Legend name of a world-model variant; the per-skill one is the MOSAIC-style model."""
     s = v.replace("_", " ")
-    return f"{s} (per skill, MOSAIC-style)" if v.startswith("modular") else s
+    return f"{s} (proposed)" if v.startswith("modular") else s
 
 
 def rmse(e, axis=None):
@@ -45,27 +111,30 @@ def scene():
     pol = SwarmClimbPolicy(4, env.radius)
     ren = mujoco.Renderer(env.model, 360, 480)
     cam = mujoco.MjvCamera()
-    cam.lookat[:] = (STEP_X - 0.35, 0.0, 0.08)
-    cam.distance, cam.azimuth, cam.elevation = 2.2, -60.0, -18.0
-    frames, t, done = [], 0, False
+    cam.lookat[:] = (STEP_X - 0.7, 0.0, 0.08)
+    cam.distance, cam.azimuth, cam.elevation = 3.8, -60.0, -32.0
+    frames, times, t, done = [], [], 0, False
     while env.agents and not done:
         if t % 10 == 0:
             ren.update_scene(env.data, cam)
             frames.append(ren.render().copy())
+            times.append(float(env.data.time))
         obs, _, term, trunc, _ = env.step(pol.act(obs))
         done = any(term.values()) or any(trunc.values())
         t += 1
     ren.update_scene(env.data, cam)
     frames.append(ren.render().copy())
+    times.append(float(env.data.time))
     pick = np.linspace(0, len(frames) - 1, 5).round().astype(int)
-    fig, axes = plt.subplots(1, 5, figsize=(10, 2.0))
-    for ax, i in zip(axes, pick, strict=True):
+    fig, axes = plt.subplots(1, 5, figsize=(7.2, 1.8))
+    for letter, ax, i in zip("abcde", axes, pick, strict=True):
         ax.imshow(frames[i])
-        ax.set_title(f"t = {i * 10 * 0.05:.0f} s")
+        panel(ax, letter, f"{times[i]:.1f} s", grid=False)
         ax.axis("off")
-    fig.suptitle(f"Scripted swarm climb, four linked spheres ({t} steps, 20 Hz)")
-    fig.tight_layout()
-    fig.savefig(IMG / "modular_scene.png", dpi=130)
+    fig.subplots_adjust(left=0.01, right=0.99, top=0.92, bottom=0.17, wspace=0.05)
+    finish(fig, "modular_scene.png", "Scripted expert · four spheres · seed 3 · simulation")
+    ren.close()
+    env.close()
 
 
 def _gif(env, act, path, cam, every=4):
@@ -136,26 +205,27 @@ def e1():
         "world_512x6",
     ]
     sets = ("test", "courses", "mass1.5")
-    fig, axes = plt.subplots(1, len(sets), figsize=(10, 3.2), sharey=False)
+    fig, axes = plt.subplots(1, len(sets), figsize=(7.2, 3.5), sharey=False)
     h = np.arange(1, 31) * 0.05
-    for ax, s in zip(axes, sets, strict=True):
+    for letter, ax, s in zip("abc", axes, sets, strict=True):
         for v in variants:
             runs = [res[k][s] for k in res if k.startswith(f"wm_{v}_s") and not k.endswith("_x")]
             curves = np.array([rmse(e, (0, 2)) for e in runs])
             kind = v.split("_")[0]
-            ls = ":" if v == "world_512x6" else ("--" if v.endswith("128x2") else "-")
-            lw = 2.4 if kind == "modular" else 1.4
-            ax.plot(h, curves.mean(0), ls, color=COLORS[kind], label=label(v), lw=lw)
+            ax.plot(h, curves.mean(0), label=label(v), markevery=6, **model_style(v))
             if len(curves) > 1:
                 ax.fill_between(h, curves.min(0), curves.max(0), color=COLORS[kind], alpha=0.15)
-        ax.set_title({"test": "test (in distribution)", "courses": "unseen 1-3 step courses",
-                      "mass1.5": "mass x1.5"}[s])  # fmt: skip
-        ax.set_xlabel("open-loop horizon [s]")
-    axes[0].set_ylabel("position RMSE [cm]")
-    axes[1].legend(fontsize=7, frameon=False)
-    fig.suptitle("E1: open-loop error, mean and range over 3 training seeds")
-    fig.tight_layout()
-    fig.savefig(IMG / "modular_e1.png", dpi=130)
+        panel(ax, letter, {"test": "Test", "courses": "Unseen courses", "mass1.5": "Mass x1.5"}[s])
+        ax.set_xlabel("Prediction horizon (s)")
+        ax.set_ylim(bottom=0)
+    axes[0].set_ylabel("Position RMSE (cm)")
+    fig.subplots_adjust(left=0.085, right=0.99, top=0.89, bottom=0.39, wspace=0.32)
+    finish(
+        fig,
+        "modular_e1.png",
+        "Mean + seed range; 3 training seeds (world 512x6: 1).",
+        legend_ax=axes[0],
+    )
 
 
 def e2():
@@ -164,67 +234,89 @@ def e2():
     labels = {"oracle_s05m3": "MuJoCo oracle", "wm_wm_modular_64x2_s0_s05m3": "modular 64x2",
               "wm_wm_frame_256x4_s0_s05m3": "frame 256x4",
               "wm_wm_world_256x4_s0_s05m3": "world 256x4"}  # fmt: skip
-    fig, axes = plt.subplots(1, 2, figsize=(9, 2.8), sharey=True)
-    for ax, cond, title in zip(axes, ("noise0.005", "mass1.5"), ("noise 5 mm", "mass x1.5"),
-                               strict=True):  # fmt: skip
+    fig, axes = plt.subplots(1, 2, figsize=(7.2, 3.6), sharey=True)
+    for letter, ax, cond, title in zip(
+        "ab", axes, ("noise0.005", "mass1.5"), ("Noise 5 mm", "Mass x1.5"), strict=True
+    ):
         sel = {c[1].strip(): c for c in rows if c[0].strip() == cond and c[1].strip() in labels}
-        names = ["MOSAIC alone (reference)"] + [labels[m] for m in labels]
+        names = ["MOSAIC alone"] + ["+ " + labels[m] for m in labels]
         base = int(next(iter(sel.values()))[3].split("/")[0])
         vals = [base] + [int(sel[m][2].split("/")[0]) for m in labels]
         ps = [None] + [float(sel[m][6]) for m in labels]
         cols = [MOSAIC, "#444444"] + [COLORS[labels[m].split()[0]] for m in list(labels)[1:]]
-        bars = ax.barh(names, vals, color=cols)
+        bars = ax.barh(names, vals, color=cols, height=0.64, edgecolor="white", linewidth=0.7)
+        bars[0].set_hatch("///")
         ax.axvline(base, color=MOSAIC, ls="--", lw=1)
         for b, p in zip(bars, ps, strict=True):
-            pv = "" if p is None else ("  p<0.001" if p < 1e-3 else f"  p={p:.2g}")
+            pv = "" if p is None else ("\np<0.001" if p < 1e-3 else f"\np={p:.2g}")
             txt = f"{b.get_width():.0f}/50{pv}"
-            ax.text(
-                b.get_width() + 0.5, b.get_y() + b.get_height() / 2, txt, va="center", fontsize=7
-            )
-        ax.set_xlim(0, 62)
-        ax.invert_yaxis()
-        ax.set_title(title)
-        ax.set_xlabel("successes on 50 paired random courses")
-    fig.suptitle(
-        "E2 (negative): MOSAIC alone vs MOSAIC + world-model verifier (exact McNemar vs MOSAIC)"
-    )
-    fig.tight_layout()
-    fig.savefig(IMG / "modular_e2.png", dpi=130)
+            ax.text(51.5, b.get_y() + b.get_height() / 2, txt, va="center", fontsize=8)
+        ax.set_xlim(0, 63)
+        ax.set_xticks([0, 25, 50])
+        panel(ax, letter, title, grid=False)
+        ax.set_axisbelow(True)
+        ax.grid(axis="x", color=GRID, linewidth=0.6)
+        ax.set_xlabel("Successful courses (of 50)")
+    axes[0].invert_yaxis()
+    fig.subplots_adjust(left=0.21, right=0.99, top=0.88, bottom=0.20, wspace=0.25)
+    finish(fig, "modular_e2.png", "Point estimates; exact McNemar vs MOSAIC alone (paired seeds).")
 
 
 def e3():
     res = pickle.load(open(OUT / "e3.pkl", "rb"))
     models = ["modular_64x2", "frame_128x2", "world_256x4"]
-    fig, axes = plt.subplots(1, 2, figsize=(9, 3))
+    fig, axes = plt.subplots(1, 2, figsize=(7.2, 3.8))
     x = np.arange(3)
     for j, (ph, lab) in enumerate((("p1", "phase 1 (no pull)"), ("p2_k10", "+ pull, 10 episodes"),
                                     ("p2_kall", "+ pull, all episodes"))):  # fmt: skip
         for ax, st in zip(axes, ("test_nopull", "test_pull"), strict=True):
             v = [[rmse(res[m, s][ph][st][:, -1]) for s in range(3)] for m in models]
-            ax.bar(x + (j - 1) * 0.27, np.mean(v, 1), 0.27, yerr=np.std(v, 1), label=lab,
-                   color=["#cccccc", "#88aacc", "#335577"][j], capsize=2)  # fmt: skip
-    for ax, t in zip(axes, ("known skills (forgetting)", "new skill: pull"), strict=True):
-        ax.set_xticks(x, [label(m).replace(" (", "\n(") for m in models], fontsize=7.5)
-        ax.set_title(t)
-    axes[0].set_ylabel("h30 position RMSE [cm]")
-    axes[0].legend(fontsize=7, frameon=False)
-    fig.suptitle("E3: adding the pull skill (3 seeds); the modular model only trains its pull net")
-    fig.tight_layout()
-    fig.savefig(IMG / "modular_e3.png", dpi=130)
+            ax.bar(
+                x + (j - 1) * 0.25,
+                np.mean(v, 1),
+                0.25,
+                yerr=np.std(v, 1),
+                label=lab,
+                color=[COLORS[m.split("_")[0]] for m in models],
+                alpha=[0.35, 0.65, 1][j],
+                hatch=["", "///", "..."][j],
+                edgecolor=INK,
+                linewidth=0.5,
+                error_kw={"elinewidth": 0.9, "capsize": 2, "capthick": 0.9},
+            )
+    for letter, ax, t in zip("ab", axes, ("Known skills", "New skill: pull"), strict=True):
+        ax.set_xticks(x, [label(m).replace(" (", "\n(").replace("_", " ") for m in models])
+        panel(ax, letter, t)
+    axes[0].set_ylabel("30-step position RMSE (cm)")
+    # Phase legend uses neutral patches: colour encodes model, hatch/opacity encodes phase.
+    from matplotlib.patches import Patch
+
+    handles = [
+        Patch(facecolor=SLATE, alpha=a, hatch=h, edgecolor=INK, label=lab)
+        for a, h, lab in zip(
+            (0.35, 0.65, 1),
+            ("", "///", "..."),
+            ("Before pull", "+ pull: 10 episodes", "+ pull: all episodes"),
+            strict=True,
+        )
+    ]
+    fig.legend(handles=handles, loc="lower center", bbox_to_anchor=(0.5, 0.07), ncol=3)
+    fig.subplots_adjust(left=0.085, right=0.99, top=0.88, bottom=0.33, wspace=0.28)
+    finish(
+        fig, "modular_e3.png", "Mean ± population SD · 3 training seeds · proposed: pull net only."
+    )
 
 
 def e4():
     res = {}
     for f in sorted(OUT.glob("e4_*_s*.pkl")):
         res.update(pickle.load(open(f, "rb")))
-    arms = {"modular_64x2": ("modular", "-"), "frame_128x2": ("frame", "--"),
-            "frame_256x4": ("frame", "-"), "frame_256x4_head": ("frame", ":"),
-            "world_256x4": ("world", "-")}  # fmt: skip
+    arms = ("modular_64x2", "frame_128x2", "frame_256x4", "frame_256x4_head", "world_256x4")
     lr = 3e-4
     conds = sorted({k[0] for k in res})
-    fig, axes = plt.subplots(2, len(conds), figsize=(4.5 * len(conds), 5.6), squeeze=False)
+    fig, axes = plt.subplots(2, len(conds), figsize=(7.2, 5.5), squeeze=False)
     for j, cond in enumerate(conds):
-        for arm, (kind, ls) in arms.items():
+        for arm in arms:
             ks = sorted({k[4] for k in res if k[:2] == (cond, arm) and k[3] in (0.0, lr)})
             seeds = sorted({k[2] for k in res if k[:2] == (cond, arm)})
             ks = [
@@ -235,25 +327,34 @@ def e4():
             for i, key in enumerate(("mass", "nominal")):
                 v = np.array([[rmse(res[cond, arm, s, 0.0 if k == 0 else lr, k][key]) for k in ks]
                               for s in seeds])  # fmt: skip
-                axes[i, j].errorbar(np.array(ks) + 0.5, v.mean(0), v.std(0), fmt=ls,
-                                    color=COLORS[kind], label=label(arm),
-                                    lw=2.4 if kind == "modular" else 1.4,
-                                    capsize=2)  # fmt: skip
-        axes[0, j].set_title(f"{cond.replace('mass', 'mass x')}: held-out episodes")
-        axes[1, j].set_title("nominal test (forgetting)")
+                axes[i, j].errorbar(
+                    np.array(ks) + 0.5,
+                    v.mean(0),
+                    v.std(0),
+                    label=label(arm),
+                    **model_style(arm),
+                    elinewidth=0.9,
+                    capthick=0.9,
+                    capsize=2,
+                )
+        mass = cond.replace("mass", "Mass x")
+        panel(axes[0, j], "abcd"[j], f"{mass} · adaptation")
+        panel(axes[1, j], "abcd"[len(conds) + j], f"{mass} · retention")
         for i in range(2):
             axes[i, j].set_xscale("log")
             axes[i, j].set_xticks(
                 [0.5, 1.5, 2.5, 5.5, 10.5, 20.5], ["0", "1", "2", "5", "10", "20"]
             )
-            axes[i, j].set_ylabel("h30 position RMSE [cm]")
-        axes[1, j].set_xlabel("adaptation episodes k")
-    axes[0, 0].legend(fontsize=7, frameon=False)
+            axes[i, j].set_ylabel("30-step RMSE (cm)")
+        axes[1, j].set_xlabel("Adaptation episodes, k")
     n_seeds = len({k[2] for k in res})
-    fig.suptitle(f"E4: online adaptation at lr {lr:g}, same update budget, mean ± std over "
-                 f"{n_seeds} seeds")  # fmt: skip
-    fig.tight_layout()
-    fig.savefig(IMG / "modular_e4.png", dpi=130)
+    fig.subplots_adjust(left=0.09, right=0.99, top=0.93, bottom=0.26, wspace=0.30, hspace=0.40)
+    finish(
+        fig,
+        "modular_e4.png",
+        f"Mean ± population SD · {n_seeds} seeds · lr = {lr:g} · matched updates.",
+        legend_ax=axes[0, 0],
+    )
 
 
 def _box(ax, x, y, w, h, text="", fc="white", ec="#333333", fs=7.5, rot=0, lw=0.8, ls="-", r=0.6):
@@ -295,146 +396,108 @@ def _add(ax, x, y, r=1.0):
 
 
 def arch():
-    """SwarmWM: state flow, exact residual block, and variant inputs/routing."""
-    fig, ax = plt.subplots(figsize=(16, 9.6))
-    ax.set(xlim=(0, 160), ylim=(0, 96))
-    ax.axis("off")
-    blue, green, ink = "#e4eff8", "#edf3ed", "#243447"
+    """Three aligned views: conditional prediction, object attention, model variants."""
+    fig, axes = plt.subplots(3, 1, figsize=(7.2, 6.6), height_ratios=[1.15, 0.85, 1.25])
+    for ax in axes:
+        ax.set(xlim=(0, 100), ylim=(0, 30))
+        ax.axis("off")
 
-    def text(x, y, label, size=10, **kw):
-        ax.text(x, y, label, fontsize=size, color=ink, va="center", **kw)
+    def box(ax, x, y, w, h, text):
+        _box(ax, x, y, w, h, text, fc="#EDF3F9", ec=SLATE, fs=8, r=0.6)
 
-    def box(x, y, w, h, label, color="white"):
-        _box(ax, x, y, w, h, label, fc=color, ec="#82909e", fs=10, r=0.7)
-
-    def arrow(a, b, **kw):
-        _arrow(ax, a, b, color=ink, lw=1.15, **kw)
-
-    text(2, 93, "(a) State prediction: one step, then repeat", 14, fontweight="bold")
-    text(2, 89, "B: batch   N: spheres   M: course faces   w: token width   L: blocks")
-    box(
-        2,
-        67,
-        21,
-        17,
-        "Raw state $x_t$\n$B \\times N \\times 9$\nposition, velocity,\nangular velocity",
-        blue,
-    )
-    box(
-        28,
-        67,
-        31,
-        17,
-        "State preprocessing\nworld / id: $x_t$\nframe / modular: "
-        "$[p-o_c,v,\\omega]$\nthen $(\\cdot-\\mu_x)/\\sigma_x$",
-        blue,
-    )
-    box(
-        64,
-        67,
-        27,
-        17,
-        "Sphere tokens\nconcat state + action (4)\n+ rise (1) if framed"
-        "\nLinear $d_{in}\\to w$; $B\\times N\\times w$",
-        blue,
-    )
-    box(
-        96,
-        67,
-        26,
-        17,
-        "SetNet\n+ category embedding*\nappend face tokens*\n$L$ pre-LN blocks → head",
-        green,
-    )
-    box(
-        127,
-        67,
-        31,
-        17,
-        "Next raw state\n$d$: head output (9 / "
-        "sphere)\n$\\hat{x}_{t+1}=x_t+\\sigma_\\Delta d+\\mu_\\Delta$\n$B \\times N "
-        "\\times 9$",
-        blue,
-    )
-    for x1, x2 in [(23, 28), (59, 64), (91, 96), (122, 127)]:
-        arrow((x1, 75.5), (x2, 75.5))
-    text(28, 63.5, "Translation only; velocities and axes stay world-aligned. Idle: $o_c=p$.")
-    text(104, 63.5, "* Inputs / routing: panel (c).")
-    arrow((143, 67), (143, 58), style="-", ls="--")
-    arrow((143, 58), (12, 58), style="-", ls="--")
-    arrow((12, 58), (12, 67), ls="--")
-    text(
-        80,
-        55,
-        "State-autoregressive unroll: predicted state fed back; recorded actions, links "
-        "and call context supplied at each step.",
-        ha="center",
-    )
-    text(
-        80,
-        51.5,
-        "Training: 8-step loss, state error scaled by $\\sigma_\\Delta$. Evaluation: "
-        "position RMSE at 30 steps. No topology or call prediction.",
-        ha="center",
-    )
-
-    text(2, 46, "(b) Inside SetNet: attention over objects, not time", 13, fontweight="bold")
-    box(2, 14, 77, 28, "", "#f8fafb")
-    text(4, 39, "$L \\times$ pre-LN residual block", 11, fontweight="bold")
-    text(4, 28, "$h$")
-    box(9, 24, 10, 8, "LN")
-    box(23, 24, 18, 8, "Multi-head\nattention", green)
-    _add(ax, 45, 28, 1.4)
-    box(50, 24, 9, 8, "LN")
-    box(63, 24, 10, 8, "MLP", green)
-    _add(ax, 76, 28, 1.4)
-    for x1, x2 in [(6, 9), (19, 23), (41, 43.6), (46.4, 50), (59, 63), (73, 74.6)]:
-        arrow((x1, 28), (x2, 28))
-    for x1, x2, y in [(7, 45, 35), (48, 76, 18)]:
-        arrow((x1, 28), (x1, y), style="-")
-        arrow((x1, y), (x2, y), style="-")
-        arrow((x2, y), (x2, 28 + (1.4 if y > 28 else -1.4)))
-    text(4, 11, "MLP: Linear $w$ → $4w$ → GELU → Linear $4w$ → $w$")
-    text(4, 7, "After $L$ blocks: Linear $w$ → 9, sphere tokens only; no final LN.")
-    text(4, 3, "Attention logits: $QK^T/\\sqrt{d_h}+\\alpha_{l,h}\\ell_{ij}+A_{ij}$", 11)
-    text(24, 20, "bias + mask", 9, ha="center")
-    arrow((29, 21.5), (29, 24))
-
-    text(84, 46, "(c) Four kinds: inputs, attention scope, routing", 13, fontweight="bold")
-    columns = [84, 97, 111, 126, 142]
-    for x, label in zip(
-        columns, ["Kind", "$d_{in}$ / cat.", "Faces", "Sphere scope", "Networks"], strict=True
-    ):
-        text(x + 0.5, 40, label, fontweight="bold")
-    rows = [
-        ("world", "13 / no", "yes", "all", "1 shared"),
-        ("id", "13 / yes", "yes", "all", "1 shared"),
-        ("frame", "14 / yes", "no", "all", "1 shared"),
-        ("modular", "14 / yes", "no", "same call", "4 skill nets"),
+    ax = axes[0]
+    panel(ax, "a", "Conditional state prediction", grid=False)
+    cards = [
+        (0, 17, "Sphere state\nposition, velocity\nangular velocity"),
+        (21, 20, "Preprocess\ntranslate positions*\nnormalize state"),
+        (45, 20, "Object tokens\nstate + action\n+ call rise*"),
+        (69, 12, "SetNet\npanel (b)"),
+        (85, 15, "Next state\nrescale delta\n+ current state"),
     ]
-    for j, row in enumerate(rows):
-        y = 34 - 6 * j
-        ax.plot([84, 158], [y + 3, y + 3], color="#d4dbe1", lw=0.7)
-        for k, (x, label) in enumerate(zip(columns, row, strict=True)):
-            text(x + 0.5, y, label, **({"fontweight": "bold"} if k == 0 else {}))
-        ax.plot([83, 83], [y - 2, y + 2], color=COLORS[row[0]], lw=3)
-    text(84, 10, "Category: 8 skill-role embeddings. Routing: cat // 2 selects", 9.5)
-    text(84, 6.5, "idle / roll / climb / pull output per sphere; no learned gate.", 9.5)
-    text(84, 3, "Modular: $A_{ij}=0$ for same call, $-10^9$ otherwise; idle groups unique.", 9.5)
-    fig.text(
-        0.5,
-        0.005,
-        "Links: learned scalar per layer/head, initially zero. Faces: Linear 3→w, zero "
-        "link bias to/from faces, padded face keys masked. Normalization: fitted state / "
-        "delta statistics.",
+    for x, w, text in cards:
+        box(ax, x, 13, w, 13, text)
+    for a, b in [(17, 21), (41, 45), (65, 69), (81, 85)]:
+        _arrow(ax, (a, 19.5), (b, 19.5), color=SLATE)
+    _arrow(ax, (92, 13), (92, 9), style="-", color=SLATE, ls="--")
+    _arrow(ax, (92, 9), (8, 9), style="-", color=SLATE, ls="--")
+    _arrow(ax, (8, 9), (8, 13), color=SLATE, ls="--")
+    ax.text(
+        50,
+        5,
+        "Feed predicted state back; supply recorded actions, links and call context.",
         ha="center",
-        va="bottom",
-        fontsize=9,
-        color="#546477",
+        fontsize=8,
     )
-    fig.subplots_adjust(left=0.01, right=0.99, bottom=0.045, top=0.99)
-    fig.savefig(IMG / "modular_arch.png", dpi=200, bbox_inches="tight", pad_inches=0.12)
-    plt.close(fig)
+    ax.text(
+        50,
+        0,
+        "* Frame / modular only; axes and velocities remain world-aligned.",
+        ha="center",
+        fontsize=8,
+        color=SLATE,
+    )
+
+    ax = axes[1]
+    panel(ax, "b", "SetNet · attention over objects, not time", grid=False)
+    for x, w, text in [
+        (3, 10, "LN"),
+        (18, 22, "Link-biased\nattention"),
+        (51, 10, "LN"),
+        (66, 15, "GELU MLP"),
+    ]:
+        box(ax, x, 10, w, 12, text)
+    for x in (45, 87):
+        _add(ax, x, 16, 1.5)
+    for a, b in [(0, 3), (13, 18), (40, 43.5), (46.5, 51), (61, 66), (81, 85.5), (88.5, 96)]:
+        _arrow(ax, (a, 16), (b, 16), color=SLATE)
+    for x1, x2, y in [(1, 45, 26), (48, 87, 5)]:
+        _arrow(ax, (x1, 16), (x1, y), style="-", color=SLATE)
+        _arrow(ax, (x1, y), (x2, y), style="-", color=SLATE)
+        _arrow(ax, (x2, y), (x2, 17.5 if y > 16 else 14.5), color=SLATE)
+    ax.text(97, 16, "$h'$", va="center", fontsize=9)
+    ax.text(
+        50,
+        0,
+        "Repeat L pre-LN blocks → sphere-only linear head (9 state deltas per sphere).",
+        ha="center",
+        fontsize=8,
+    )
+
+    ax = axes[2]
+    panel(ax, "c", "Model variants · fixed routing, no learned gate", grid=False)
+    columns = [1, 20, 42, 56, 75]
+    for x, title in zip(
+        columns, ["Model", "Token input", "Faces", "Attention", "Networks"], strict=True
+    ):
+        ax.text(x, 26, title, fontsize=8, fontweight="bold")
+    rows = [
+        ("world", "13", "yes", "all spheres", "1 shared"),
+        ("id", "13 + category", "yes", "all spheres", "1 shared"),
+        ("frame", "14 + category", "no", "all spheres", "1 shared"),
+        ("modular", "14 + category", "no", "same call", "4 skill networks"),
+    ]
+    from matplotlib.patches import Rectangle
+
+    for j, row in enumerate(rows):
+        y = 21 - j * 5.5
+        if row[0] == "modular":
+            ax.add_patch(Rectangle((0, y - 1.8), 100, 5, facecolor="#FFF2E8", edgecolor="none"))
+        ax.plot([0, 100], [y + 3.3, y + 3.3], color=GRID, lw=0.6)
+        for x, text in zip(columns, row, strict=True):
+            ax.text(
+                x,
+                y,
+                text,
+                fontsize=8,
+                color=MOSAIC if row[0] == "modular" else INK,
+                fontweight="bold" if row[0] == "modular" else "normal",
+            )
+    fig.subplots_adjust(left=0.025, right=0.975, top=0.95, bottom=0.09, hspace=0.48)
+    finish(
+        fig,
+        "modular_arch.png",
+        "Skill networks: idle / roll / climb / pull · state prediction, not topology prediction.",
+    )
 
 
 def mosaic():
@@ -449,65 +512,114 @@ def mosaic():
              "fric1.5": "friction\nx1.5", "mass0.7": "mass\nx0.7", "mass1.5": "mass\nx1.5",
              "rise0.10": "rise\n0.10 m", "n5": "N = 5", "n6": "N = 6"}  # fmt: skip
     adapt = {c: pickle.load(open(SKILLS / f"adapt_{c}_shaped.pkl", "rb")) for c in conds}
-    arms = {"expert": ("scripted expert (sequential)", "#222222"),
-            "script": ("scheduler + scripted skills", "#9e9e9e"),
-            "mosaic": ("MOSAIC (learned skills)", MOSAIC)}  # fmt: skip
-    fig = plt.figure(figsize=(13, 3.9))
-    gs = fig.add_gridspec(1, 3, width_ratios=[1, 1.7, 1.25], wspace=0.32)
+    arms = {
+        "expert": ("Scripted expert", INK),
+        "script": ("Scheduler + scripted skills", SLATE),
+        "mosaic": ("MOSAIC (learned skills)", MOSAIC),
+    }
+    fig = plt.figure(figsize=(7.2, 7.2))
+    gs = fig.add_gridspec(2, 2, height_ratios=[1, 1], hspace=0.55, wspace=0.60)
 
-    # (a) test seeds: success against speed
-    ax = fig.add_subplot(gs[0])
-    pts = {"expert": ("expert", "#222222"), "dagger": ("DAgger\n(whole task)", COLORS["world"]),
-           "bc512": ("BC skills,\nno chaining", "#c9a0a0"),
-           "wam": ("WAM skills,\nno chaining", "#e08e8e"),
-           "script": ("scripted\nskills", "#9e9e9e"),
-           "chain_wam_mixe": ("MOSAIC", MOSAIC)}  # fmt: skip
-    for k, (lab, c) in pts.items():
+    # (a) Success and speed retain the original paired evaluation statistics.
+    ax = fig.add_subplot(gs[0, 0])
+    pts = {
+        "expert": ("Expert", INK, "s"),
+        "dagger": ("DAgger", COLORS["frame"], "o"),
+        "bc512": ("BC skills\n(no chain)", COLORS["id"], "^"),
+        "wam": ("WAM skills\n(no chain)", SLATE, "v"),
+        "script": ("Scripted skills", SLATE, "s"),
+        "chain_wam_mixe": ("MOSAIC", MOSAIC, "D"),
+    }
+    for k, (lab, c, marker) in pts.items():
         n, st = stats(s4, k)
         big = k == "chain_wam_mixe"
-        ax.scatter(st, n, s=150 if big else 55, color=c, zorder=3, edgecolor="white",
-                   marker="*" if big else "o")  # fmt: skip
-        dx, dy = {"expert": (-12, 1.5), "dagger": (-22, -5), "script": (8, -4.5),
-                  "bc512": (6, -1), "wam": (6, -1), "chain_wam_mixe": (-38, 2)}[k]  # fmt: skip
-        ax.annotate(lab, (st, n), (st + dx, n + dy), fontsize=7, color=c,
-                    fontweight="bold" if big else "normal")  # fmt: skip
-    ax.set_xlim(100, 290)
-    ax.set_ylim(22, 55)
-    ax.set_xlabel("mean steps on success (lower is faster)")
-    ax.set_ylabel("successes / 50")
-    ax.set_title("(a) test seeds, one step, N = 4", fontsize=9)
+        ax.scatter(
+            st,
+            n,
+            s=55 if big else (75 if k == "script" else 35),
+            facecolor="none" if k == "script" else c,
+            zorder=3,
+            edgecolor=SLATE if k == "script" else "white",
+            linewidth=1 if k == "script" else 0.6,
+            marker=marker,
+        )
+        offset = {
+            "expert": (-6, 8),
+            "dagger": (-10, -16),
+            "script": (6, -20),
+            "bc512": (6, -8),
+            "wam": (6, -6),
+            "chain_wam_mixe": (0, 9),
+        }[k]
+        ax.annotate(
+            lab,
+            (st, n),
+            xytext=offset,
+            textcoords="offset points",
+            ha="right" if k == "expert" else "left",
+            fontsize=8,
+            color=c,
+            fontweight="bold" if big else "normal",
+            arrowprops={"arrowstyle": "-", "color": SLATE, "lw": 0.7} if k == "script" else None,
+        )
+    ax.set_xlim(110, 300)
+    ax.set_ylim(22, 56)
+    ax.set_xlabel("Mean steps on success ↓")
+    ax.set_ylabel("Successful episodes (of 50)")
+    panel(ax, "a", "Single step · N = 4")
 
-    # (b) success on fresh courses under perturbations
-    ax = fig.add_subplot(gs[1])
+    # (c) Each ratio averages only over courses solved by both policies.
+    ax_speed = fig.add_subplot(gs[0, 1])
     x = np.arange(len(conds))
-    for j, (k, (lab, c)) in enumerate(arms.items()):
-        v = [stats(adapt[cd], k)[0] for cd in conds]
-        ax.bar(x + (j - 1) * 0.27, v, 0.27, color=c, label=lab)
-    ax.set_xticks(x, list(conds.values()), fontsize=7)
-    ax.set_ylim(0, 56)
-    ax.set_ylabel("successes / 50")
-    ax.legend(fontsize=7.5, frameon=False, ncol=3, loc="upper center", bbox_to_anchor=(0.5, -0.17))
-    ax.set_title("(b) unseen random 1-3 step courses, zero-shot", fontsize=9)
-
-    # (c) speed relative to the expert, courses both solve
-    ax = fig.add_subplot(gs[2])
     for j, k in enumerate(("script", "mosaic")):
         ratios = []
         for cd in conds:
             r = adapt[cd]
             both = r[k]["success"] & r["expert"]["success"]
             ratios.append((r[k]["steps"][both] / r["expert"]["steps"][both]).mean())
-        ax.barh(x + (j - 0.5) * 0.38, ratios, 0.38, color=arms[k][1], label=arms[k][0])
-    ax.axvline(1, color="#222222", lw=1, ls="--")
-    ax.text(0.98, len(conds) - 0.2, "expert", fontsize=7, ha="right")
-    ax.set_yticks(x, [c.replace("\n", " ") for c in conds.values()], fontsize=7)
-    ax.invert_yaxis()
-    ax.set_xlim(0, 1.15)
-    ax.set_xlabel("steps / expert steps (lower is faster)")
-    ax.set_title("(c) speed on courses both solve", fontsize=9)
-    title = "MOSAIC against the scripted expert and learned baselines (50 paired seeds per bar)"
-    fig.suptitle(title, y=1.04)
-    fig.savefig(IMG / "mosaic_benchmark.png", dpi=150, bbox_inches="tight")
+        ax_speed.barh(
+            x + (j - 0.5) * 0.38,
+            ratios,
+            0.38,
+            color=arms[k][1],
+            hatch="///" if k == "mosaic" else "",
+            edgecolor="white",
+            linewidth=0.5,
+        )
+    ax_speed.axvline(1, color=INK, lw=0.9, ls="--")
+    ax_speed.set_yticks(x, [c.replace("\n", " ") for c in conds.values()])
+    ax_speed.invert_yaxis()
+    ax_speed.set_xlim(0, 1.15)
+    ax_speed.set_xlabel("Steps / expert steps ↓")
+    panel(ax_speed, "b", "Paired-course speed", grid=False)
+    ax_speed.grid(axis="x", color=GRID, linewidth=0.6)
+
+    # (b) Zero-shot performance, one shared legend for both course panels.
+    ax_courses = fig.add_subplot(gs[1, :])
+    for j, (k, (lab, c)) in enumerate(arms.items()):
+        v = [stats(adapt[cd], k)[0] for cd in conds]
+        ax_courses.bar(
+            x + (j - 1) * 0.25,
+            v,
+            0.25,
+            color=c,
+            label=lab,
+            hatch="///" if k == "mosaic" else "",
+            edgecolor="white",
+            linewidth=0.5,
+        )
+    ax_courses.set_xticks(x, list(conds.values()))
+    ax_courses.set_ylim(0, 55)
+    ax_courses.set_ylabel("Successful courses (of 50)")
+    panel(ax_courses, "c", "Unseen 1-3 step courses · zero-shot perturbations")
+    fig.subplots_adjust(left=0.09, right=0.99, top=0.94, bottom=0.18)
+    finish(
+        fig,
+        "mosaic_benchmark.png",
+        "50 paired evaluation seeds per condition · point estimates, no uncertainty intervals.",
+        legend_ax=ax_courses,
+        ncol=3,
+    )
 
 
 if __name__ == "__main__":

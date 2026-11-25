@@ -8,6 +8,8 @@ All notable changes to this project are documented here. The format follows
 
 ### Changed
 
+- Research-inspired shared figure style, readable panel layouts, redundant MOSAIC highlighting,
+  explicit uncertainty labels and synchronized paper/README figure captions.
 - README reorganised around the paper: title, links, teaser, TL;DR, abstract, key results
   (E1-E4, MOSAIC), method, reproduction commands and BibTeX citation; benchmark details folded.
 - Figures: paper-style architecture figure of the swarm world models (`modular_figures.py arch`),
