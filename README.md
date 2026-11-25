@@ -147,9 +147,41 @@ spheres. It chooses the plan by the makespan predicted with steps-to-go effect m
 (`SkillValue`), replans level by level, and pulls back up any sphere that fell off the platform.
 Each skill call carries the frame of its step, so skills learned on one step run on any course.
 
-`swarm_modular.SwarmWM` predicts the swarm from states and actions, either with one shared net
-or with one small net per skill (`modular`), with inputs in the world frame or in the frame of
-the skill call each sphere executes.
+### Swarm world model: inputs and outputs
+
+One step of `swarm_modular.SwarmWM.step(x, act, ctx)`, unrolled open loop for 30 steps in the
+evaluation. Actions and links are given at every step; reward and success are computed from the
+predicted states.
+
+```mermaid
+flowchart LR
+  subgraph IN["Inputs at step t (N spheres)"]
+    X["state x: N × 9<br/>pos, vel, ang_vel"]
+    A["action: N × 4<br/>fx, fy, lift, attach"]
+    C["skill call per sphere<br/>skill + role, frame origin, step rise"]
+    L["links: N × N"]
+    F["course faces: ≤ 3 × 3<br/>(world, id only)"]
+  end
+  X --> R{"frame / modular:<br/>pos − call origin"}
+  C --> R
+  R --> T["sphere tokens<br/>9 + 4 (+ rise) → width"]
+  A --> T
+  C -- "skill·role embedding<br/>(not world)" --> T
+  F --> SN
+  T --> SN["set transformer<br/>one shared net, or one per skill (modular)"]
+  L -- "attention bias" --> SN
+  SN --> D["Δx: N × 9<br/>normalised state change"]
+  D --> Y["x(t+1) = x + Δx"]
+  Y -. "open-loop unroll" .-> X
+```
+
+| Kind | Position input | Skill and role | Course faces | Nets |
+|---|---|---|---|---|
+| `world` | world frame | — | yes | 1 |
+| `id` | world frame | embedding | yes | 1 |
+| `frame` | skill-call frame, + rise | embedding | — | 1 shared |
+| `modular` | skill-call frame, + rise | embedding | — | 4 (idle, roll, climb, pull), attention within the call |
+
 
 ## Installation
 
