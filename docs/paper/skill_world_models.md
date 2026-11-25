@@ -1,6 +1,6 @@
 # Skill-frame world models for a swarm of linked spheres: zero-shot generalisation and skill addition without forgetting
 
-*Working paper, draft of 2026-11-21. Code: branch `feat/swarm-step-climb` of this repository. Every number below comes from a run listed in Appendix C; results marked
+*Working paper, draft of 2026-11-21. Code: `main` branch of this repository. Every number below comes from a run listed in Appendix C; results marked
 **preliminary** use too few episodes for a conclusion and are being extended.*
 
 ## Abstract

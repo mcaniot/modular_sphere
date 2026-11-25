@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- README reorganised around the paper: title, links, teaser, TL;DR, abstract, key results
+  (E1-E4, MOSAIC), method, reproduction commands and BibTeX citation; benchmark details folded.
+
 ## [1.1.0] - 2026-11-24
 
 ### Added
